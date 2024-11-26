@@ -1,3 +1,15 @@
+.Rproj.user
+.Rhistory
+.RData
+.Ruserdata
+
+NEW_HIV_UKRDB_phylotypes.Rproj
+data/
+rds/
+results/
+scripts/bkp/
+old/
+
 # History files
 .Rhistory
 .Rapp.history
