@@ -1,4 +1,4 @@
-libs_load <- c("dplyr","openxlsx", "glue","ape","treedater","lubridate","data.table","ggtree","ggpubr","ggplot2","viridis")
+libs_load <- c("dplyr","openxlsx", "glue","ape","treedater","lubridate","data.table","ggtree","ggpubr","ggplot2","viridis","treeio")
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
 seqs_folder_naive <- "data/subtype_seqs_naive"
@@ -73,7 +73,6 @@ saveRDS(tree_a1_adj, "rds/tree_a1_adj.rds")
 saveRDS(subtype_a1_sampleTimes, "rds/subtype_a1_sampleTimes.rds")
 saveRDS(timetree_a1_adj, "rds/timetree_a1_adj.rds")
 
-library(treeio)
 tr_a1 <- read.iqtree(glue("{output_iqtree_folder}/A_A1_curated_refB_aln_len_filter.fasta.treefile"))
 ggtree(tr_a1) +  geom_text(aes(label = UFboot), hjust = 1, vjust = -0.4, size = 1, color="red") #geom_nodelab(aes(label = UFboot, color="red", vjust=-.5, size=2))
 ggsave(glue("results/02_explore_trees/A1_UBoot.pdf"), width=12, height=20, dpi=300, bg="white")

@@ -33,7 +33,7 @@ demog_md$hivpos_year <- year(demog_md$hivpos_ymd)
 system("mkdir -p rds/")
 saveRDS(demog_md, "rds/demog_md.rds")
 
-### STEP 2: INSPECT SUBTYPES AND SPLIT DFS AND FASTAS FOR EACH SUBTYPE ###
+### INSPECT SUBTYPES AND SPLIT DFS AND FASTAS FOR EACH SUBTYPE ###
 unique(subtype_md$rega3subtype) # 396 unique subtypes; 144 subtypes LANL
 unique(subtype_md$rega3simplesubtype) # 44 unique subtypes
 
@@ -42,6 +42,11 @@ unique(subtype_md$rega3simplesubtype) # 44 unique subtypes
 # Deduplicating only for exploratory plotting purposes
 subtype_md_dedup <- subtype_md[!duplicated(subtype_md$patientindex), ] # nrow = total number of patients
 subtype_md_counts <- subtype_md_dedup %>% group_by(rega3subtype) %>% summarise(n = n()) %>% arrange(desc(n))
+# Part of table 1
+demog_md_subtype_match_overall <- subtype_md_counts
+print(length(unique(demog_md_subtype_match_overall$rega3subtype))) #364 - 4 considered = 360 other subtypes
+demog_md_subtype_match_overall$subtype2 <- ifelse(demog_md_subtype_match_overall$rega3subtype %in% c("B","C","A (A1)", "CRF 02_AG"), as.character(demog_md_subtype_match_overall$rega3subtype), "Others")
+View(demog_md_subtype_match_overall %>% group_by(subtype2) %>% summarise(n=sum(n)))
 # Remove simple subtypes with < 1000 patientindex represented
 subtype_md_counts <- subtype_md_counts %>% filter(n >= 1000)
 # Merge counts with patient/subtype md
@@ -114,6 +119,7 @@ for(i in 1:length(demog_vars_pl)) {
 }
 
 # Get only the >1000 freq subtypes from subtype_md_flt but keeping multiple tests / samples per patient
+subtype_md_all <- subtype_md
 subtype_md <- subtype_md[subtype_md$rega3subtype %in% unique(subtype_md_flt$rega3subtype),] # 9 subtypes, 4 with >5k sequences
 
 # Add day 15 to all and convert to yyyy-mm-dd format
@@ -166,18 +172,31 @@ for(i in 1:length(incl_subtypes)) {
 	match_seqs_subtype_md("data/seqs_20230518.fasta", demog_md_subtype_match_naive_uq_dates_list, incl_subtypes[i], seqs_folder=seqs_folder_naive)
 }
 
-# Mean sequences per patient
+calc_iqr <- function(data) {
+	lower_bound <- quantile(data, 0.25, na.rm=T)  # 25th percentile
+	upper_bound <- quantile(data, 0.75, na.rm=T)  # 75th percentile
+	print(paste0("Lower Bound (25th Percentile):", round(lower_bound,2)))
+	print(paste0("Upper Bound (75th Percentile):", round(upper_bound,2)))
+}
+
+# Mean sequences per patient (all subtypes)
 fasta_all <- read.FASTA("data/seqs_20230518.fasta", type = "DNA")
 names(fasta_all) <- paste0("t.",names(fasta_all)) # ok, same number of observations md and fasta
-subtype_md_nseqs <- subtype_md %>% add_count(patientindex, name="nseqs") %>% group_by(patientindex) %>% filter(row_number() >= (n())) #filter(n() == 1)
-mean(subtype_md_nseqs$nseqs)
-sd(subtype_md_nseqs$nseqs)
-median(subtype_md_nseqs$nseqs)
-IQR(subtype_md_nseqs$nseqs); table(subtype_md_nseqs$nseqs); hist(subtype_md_nseqs$nseqs)
+subtype_md_nseqs <- subtype_md_all %>% add_count(patientindex, name="nseqs") %>% group_by(patientindex) %>% filter(row_number() >= (n())) #filter(n() == 1)
+mean(subtype_md_nseqs$nseqs) #1.47
+sd(subtype_md_nseqs$nseqs) # 1.2
+median(subtype_md_nseqs$nseqs) #1
+#IQR(subtype_md_nseqs$nseqs); 
+calc_iqr(subtype_md_nseqs$nseqs) #1
+tabl <- table(subtype_md_nseqs$nseqs)
+tabl
+sum(tabl)
+sum(tabl[3:length(tabl)])
+hist(subtype_md_nseqs$nseqs, breaks=30)
 
 incl_subtypes_adj <- c("A_A1","CRF_02_AG","C","B")
 
-### STEP 3: ADJUST SEQUENCES AND BUILD ALIGNMENTS (MAFFT) + MERGE ###
+### ADJUST SEQUENCES AND BUILD ALIGNMENTS (MAFFT) + MERGE ###
 # Make sure seqs are the same length and mask terminal regions
 # Manually rename files to match incl_subtypes_adj
 for(i in 1:length(incl_subtypes_adj)) {
@@ -254,10 +273,10 @@ for(i in 1:n_sets_c){
 fasta_a1 <- read.dna(glue("{seqs_folder_naive}/A_A1_curated_refB_aln_len_filter.fasta"), format="fasta")
 fasta_crf02ag <- read.dna(glue("{seqs_folder_naive}/CRF_02_AG_curated_refB_aln_len_filter.fasta"), format="fasta")
 
-### STEP 4: BUILD ML TREE (IQTREE) AND CURATE MD, ALIGNMENT AND TREES
+### BUILD ML TREE (IQTREE) AND CURATE MD, ALIGNMENT AND TREES
 # Load IQTREE PATH from .Renviron file placed in HOME directory
 
-# NOTE: running all on HPC with 5000 bootstrap runs for each tree joined in the end
+# NOTE: ran all on HPC with 5000 bootstrap runs for each tree joined in the end
 
 # Subtype B
 iqtree_bin <- Sys.getenv("IQTREE") # this points to iqtree-2.2.0-Linux

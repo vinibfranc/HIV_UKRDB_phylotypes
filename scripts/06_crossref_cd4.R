@@ -20,7 +20,7 @@ print(nrow(cd4_md)) #168660
 # check if CD4s before diagnosis
 saveRDS(cd4_md, file=glue("{RDS_PATH}/cd4_md.rds"))
 
-# NOTE: this plots include all risk groups and the four considered subtypes
+# these plots include all risk groups and the four considered subtypes
 plot_cd4_measurement_distributions <- function(cd4_df, out_prefix) {
 	# get only ids where more than one CD4 measurement was performed
 	out_f <- "06_cd4_distr"
@@ -32,6 +32,7 @@ plot_cd4_measurement_distributions <- function(cd4_df, out_prefix) {
 	ggsave(file=glue("{RESULTS_PATH}/{out_f}/{out_prefix}_cd4_hist_measur.pdf"), dpi=600, width=6, height=5)
 	
 	cd4_md$year <- format(as.Date(cd4_md$cd4_date_ymd, format="%Y-%m-%d"),"%Y")
+	cd4_md_id_occur_test <- cd4_md %>% mutate(measurement = rowid(patientindex))
 	cd4_md_id_occur <- cd4_md %>% mutate(measurement = rowid(patientindex)) %>% group_by(measurement, year) %>% summarise(measur_year_n = n()) # # measurement for each patient and group by it
 	cd4_md_2_more_cd4_year <- cd4_md %>% group_by(year) %>% summarise(year_n = n())
 	cd4_md_measur_time <- merge(cd4_md_id_occur, cd4_md_2_more_cd4_year, by="year")
@@ -52,7 +53,7 @@ plot_cd4_measurement_distributions <- function(cd4_df, out_prefix) {
 	write.csv(cd4_md_measur_time, file=glue("{RESULTS_PATH}/{out_f}/{out_prefix}_cd4_measur_order_time.csv"), quote=F, row.names=F) #col.names=T,
 	write.csv(cd4_md_2_more_cd4_year, file=glue("{RESULTS_PATH}/{out_f}/{out_prefix}_cd4_measur_raw_time.csv"), quote=F, row.names=F)
 	
-	list(cd4_md_measur_time, cd4_md_2_more_cd4_year)
+	list(cd4_md_id_occur_test, cd4_md_measur_time, cd4_md_2_more_cd4_year)
 }
 
 # get only ids where more than one CD4 measurement was performed (118k to 89305 rows --> 38k patients to 16334)
@@ -87,14 +88,9 @@ remove_cd4_after_art <- function(demog_md_choice, subtype_choice) {
 	# Check if there are CD4 before diagnosis (perhaps before HIV infection)
 	cd4_before_art_cl$hivpos_decimal_date <- decimal_date(as.Date(cd4_before_art_cl$hivpos_ymd))
 	cd4_before_art_cl$diff_diag_cd4_dates <- cd4_before_art_cl$hivpos_decimal_date - cd4_before_art_cl$cd4_decimal_date
-	#cd4_before_art_and_diag <- cd4_before_art_cl[cd4_before_art_cl$cd4_decimal_date < cd4_before_art_cl$hivpos_decimal_date,]
-	# patients with CD4 more than 3 months before diagnosis (probably unrelated to HIV infection)
-	#print("NAs in diff_diag_cd4_dates")
-	#print(nrow(cd4_before_art_cl[is.na(cd4_before_art_cl$diff_diag_cd4_dates),]))
-	#hist(cd4_before_art_cl$diff_diag_cd4_dates, breaks=50)
 	
 	# IMPORTANT: Measurements made in the days before diagnosis may still be valid for infection-related CD4 decrease, 
-	# so considering up to one month ok (as considering mid-month precision, in the worst cenario would include CD4 from 1.5 month before diag)
+	# so considering up to one month ok (as considering mid-month precision, in the worst scenario would include CD4 from 1.5 month before diag)
 	
 	cd4_before_art_and_diag <- cd4_before_art_cl[cd4_before_art_cl$diff_diag_cd4_dates > 0.084,] # 1 month = 0.0833334 year, 3 months = 0.25 year, 6 months = 0.5 year
 	print("CD4 more than 1 month diagnosis? Unique patients")
@@ -137,76 +133,11 @@ for(i in 1:length(subtype_choices)) {
 # same as above but RM the ones that now have less than 2 measurements: 864 to 863 (1), 774 to 768 (6), 2520 to 2505 (15), 11011 to 10971 (40)
 saveRDS(cd4_before_art_subtypes, glue("{RDS_PATH}/cd4_before_art_subtypes.rds"))
 
-cd4_before_art_subtypes_all <- list(cd4_before_art_subtypes[[1]][[1]], cd4_before_art_subtypes[[2]][[1]], cd4_before_art_subtypes[[3]][[1]], cd4_before_art_subtypes[[4]][[1]])
-cd4_before_art_subtypes_all_df <- rbindlist(cd4_before_art_subtypes_all)
-# total number of CD4 measurements
-nrow(cd4_before_art_subtypes_all_df) #51557
-print(length(unique(cd4_before_art_subtypes_all_df$patientindex))) #15089 (sum of previous gives 15107? n=8 diff?)
-# mean per patient
-summary_cd4_meas <- cd4_before_art_subtypes_all_df %>% add_count(patientindex, name="n_cd4") %>% group_by(patientindex) %>% filter(row_number() >= (n())) #filter(n() == 1)
-mean(summary_cd4_meas$n_cd4) #3.41686
-sd(summary_cd4_meas$n_cd4) #0.9822102
-median(summary_cd4_meas$n_cd4) # 4
-IQR(summary_cd4_meas$n_cd4); table(summary_cd4_meas$n_cd4); hist(summary_cd4_meas$n_cd4) #1
-# 2    3    4     5      6    8    10 
-# 3701 3023 6789 1560    3    9    4 
-
-# TODO running for now, come back when need to generate table
-# Table S2: CD4 filter
-# Remove duplicated patients
-cd4_before_art_subtypes_all_df_ts2 <- cd4_before_art_subtypes_all_df %>% distinct(patientindex, .keep_all = TRUE)
-# nrow(cd4_before_art_subtypes_all_df_ts2[cd4_before_art_subtypes_all_df_ts2$rega3subtype=="B",]) gives 10995, different then 11011 from table 1, C gives 2518 instead of 250, others give same
-
-# Gender
-demog_md_subtype_match_sex_cd4 <- cd4_before_art_subtypes_all_df_ts2
-demog_md_subtype_match_sex_cd4$subtype2 <- ifelse(demog_md_subtype_match_sex_cd4$rega3subtype %in% c("B","C","A (A1)", "CRF 02_AG"), as.character(demog_md_subtype_match_sex_cd4$rega3subtype), "Others")
-demog_md_subtype_match_sex_cd4 <- demog_md_subtype_match_sex_cd4 %>% group_by(sexid, subtype2) %>% summarise(n=n())
-demog_md_subtype_match_sex_cd4 %>% group_by(subtype2) %>% mutate(n_perc=glue("{n} ({round(n*100/sum(n),1)})"))
-#View(demog_md_subtype_match_sex %>% group_by(sexid, subtype2) %>% summarise(n=n())) #%>% mutate(n_perc=glue("{n} ({n*100/})"))
-
-# Ethnicity
-demog_md_subtype_match_eth_cd4 <- cd4_before_art_subtypes_all_df_ts2
-demog_md_subtype_match_eth_cd4$subtype2 <- ifelse(demog_md_subtype_match_eth_cd4$rega3subtype %in% c("B","C","A (A1)", "CRF 02_AG"), as.character(demog_md_subtype_match_eth_cd4$rega3subtype), "Others")
-demog_md_subtype_match_eth_cd4 <- demog_md_subtype_match_eth_cd4 %>% mutate(ethnicityid2 = case_when(
-	(ethnicityid=="Black-Caribbean") | (ethnicityid=="Black-African") | (ethnicityid=="Black-other/unspecified") ~ "Black-Caribbean / African / other",
-	(ethnicityid=="Indian/Pakistani/Bangladeshi") ~ "Indian/Pakistani/Bangladeshi", 
-	(ethnicityid=="Other Asian/Oriental") ~ "Other Asian/Oriental", 
-	(ethnicityid=="White") ~ "White",
-	TRUE ~ "Other/mixed/NA"))
-demog_md_subtype_match_eth_cd4 <- demog_md_subtype_match_eth_cd4 %>% group_by(ethnicityid2, subtype2) %>% summarise(n=n())
-demog_md_subtype_match_eth_cd4 %>% group_by(subtype2) %>% mutate(n_perc=glue("{n} ({round(n*100/sum(n),1)})"))
-
-# Exposure (risk group)
-demog_md_subtype_match_exposure_cd4 <- cd4_before_art_subtypes_all_df_ts2
-demog_md_subtype_match_exposure_cd4$subtype2 <- ifelse(demog_md_subtype_match_exposure_cd4$rega3subtype %in% c("B","C","A (A1)", "CRF 02_AG"), as.character(demog_md_subtype_match_exposure_cd4$rega3subtype), "Others")
-demog_md_subtype_match_exposure_cd4 <- demog_md_subtype_match_exposure_cd4 %>% mutate(exposureid2 = case_when(
-	(exposureid=="IDU") | (exposureid=="Blood products") ~ "IDU and blood products",
-	(exposureid=="Homo/bisexual") ~ "Homo/bisexual", (exposureid=="Heterosexual") ~ "Heterosexual", TRUE ~ "Other/NA")) #(exposureid=="Not known") ~ "Not known"
-demog_md_subtype_match_exposure_cd4 <- demog_md_subtype_match_exposure_cd4 %>% group_by(exposureid2, subtype2) %>% summarise(n=n())
-demog_md_subtype_match_exposure_cd4 %>% group_by(subtype2) %>% mutate(n_perc=glue("{n} ({round(n*100/sum(n),1)})"))
-
-# Region
-demog_md_subtype_match_region_cd4 <- cd4_before_art_subtypes_all_df_ts2
-demog_md_subtype_match_region_cd4$subtype2 <- ifelse(demog_md_subtype_match_region_cd4$rega3subtype %in% c("B","C","A (A1)", "CRF 02_AG"), as.character(demog_md_subtype_match_region_cd4$rega3subtype), "Others")
-demog_md_subtype_match_region_cd4 <- demog_md_subtype_match_region_cd4 %>% group_by(PHE_regiondiagnosed, subtype2) %>% summarise(n=n())
-View(demog_md_subtype_match_region_cd4 %>% group_by(subtype2) %>% mutate(n_perc=glue("{n} ({round(n*100/sum(n),1)})")))
-
-# Age at diagnosis
-demog_md_subtype_match_age_cd4 <- cd4_before_art_subtypes_all_df_ts2
-demog_md_subtype_match_age_cd4$subtype2 <- ifelse(demog_md_subtype_match_age_cd4$rega3subtype %in% c("B","C","A (A1)", "CRF 02_AG"), as.character(demog_md_subtype_match_age_cd4$rega3subtype), "Others")
-demog_md_subtype_match_age_cd4$hiv_diag_decimal_date <- decimal_date(as.Date(demog_md_subtype_match_age_cd4$hivpos_ymd))
-demog_md_subtype_match_age_cd4 <- demog_md_subtype_match_age_cd4 %>% mutate(age_diag=round(hiv_diag_decimal_date-dob_y))
-demog_md_subtype_match_age_cd4 <- demog_md_subtype_match_age_cd4 %>% mutate(
-	age_group = dplyr::case_when(age_diag<=29 ~ "<29", age_diag>29 & age_diag<=39 ~ "30-39", age_diag>39 & age_diag<=49 ~ "40-49", age_diag>49 & age_diag<=59 ~ "50-59", age_diag>59 ~ "60+"),
-	age_group = factor(age_group,level = c("<29","30-39","40-49","50-59","60+")))
-demog_md_subtype_match_age_cd4 <- demog_md_subtype_match_age_cd4 %>% group_by(age_group, subtype2) %>% summarise(n=n())
-View(demog_md_subtype_match_age_cd4 %>% group_by(subtype2) %>% mutate(n_perc=glue("{n} ({round(n*100/sum(n),1)})")))
-
 give.n <- function(x){
 	return(c(y = median(x)*1.05, label = length(x))) # experiment with the multiplier to find the perfect position
 }
 
-# initial exploratory analysis (comparying phylotype against backbone)
+# initial exploratory analysis without formal modelling (comparying phylotype against backbone)
 calc_regr_slopes <- function(cd4_before_art_subt, subtype_choice, extr_clusters, lookup_pat_tests, backbone_control) { #extr_clusters
 	# Calculate individual regression for each test and get intercept, slope, r2, and median_time_measurement (FOR ALL PATIENTS WITH CD4 INFO WITHOUT MATCHING WITH SAMPLES)
 	cd4_md_all <- as.data.table(cd4_before_art_subt)
@@ -339,4 +270,3 @@ for(i in 1:length(min_cl_size_choices)) {
 	}
 }
 saveRDS(cd4_regr_subtypes, glue("{RDS_PATH}/cd4_regr_subtypes.rds"))
-#cd4_regr_subtypes <- readRDS(glue("{RDS_PATH}/cd4_regr_subtypes.rds"))

@@ -1,4 +1,4 @@
-libs_load <- c("ggplot2","dplyr","ggpubr","data.table","glue","lme4","lubridate","viridis")
+libs_load <- c("ggplot2","dplyr","ggpubr","ggforce","data.table","glue","lme4","lubridate","viridis", "stringr")
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
 DATA_PATH="data"
@@ -7,8 +7,10 @@ RESULTS_PATH="results"
 
 extracted_clusters <- readRDS(glue("{RDS_PATH}/extracted_clusters.rds"))
 subtype_choices <- c("A (A1)","CRF 02_AG","C", "B")
+tree_names <- c("A_A1","CRF_02_AG","C","B")
+min_cl_size_choices <- c(30, 50, 100)
 
-### STEP 9: PREPARE VL AND CD4 DATA ###
+### PREPARE VL AND CD4 DATA ###
 # CD4 decline data preparation
 demog_md <- readRDS(glue("{RDS_PATH}/demog_md.rds"))
 subtype_md <- readRDS(glue("{RDS_PATH}/subtype_md.rds"))
@@ -48,15 +50,17 @@ get_vl <- function(demog_md_choice, subtype_choice) {
 	
 	demog_md_choice$hivpos_ymd <- as.Date(gsub("\\/", "15", demog_md_choice$hivpos_my), "%m%d%Y")
 	demog_md_choice$hivpos_decimal_date <- decimal_date(as.Date(demog_md_choice$hivpos_ymd))
+	demog_md_choice$artstart_ymd <- as.Date(gsub("\\/", "15", demog_md_choice$artstart_my), "%m%d%Y")
+	demog_md_choice$artstart_decimal_date <- decimal_date(as.Date(demog_md_choice$artstart_ymd))
 	print("nrows md")
 	print(nrow(demog_md_choice))
 	print("unique patients")
 	print(length(unique(demog_md_choice$patientindex)))
 	
 	# Old "spvl" extraction
-	#spvl_md <- demog_md_choice %>% left_join(vl_md_preart, by="patientindex", relationship="many-to-many") %>% filter( (vl_decimal_date - hivpos_decimal_date >= 0.5) & (vl_decimal_date - hivpos_decimal_date) <= 2)
-	spvl_md <- demog_md_choice %>% left_join(vl_md_preart, by="patientindex", relationship="many-to-many") %>% filter( (vl_decimal_date - hivpos_decimal_date >= 0) & (vl_decimal_date - hivpos_decimal_date) <= 2)
-	#print(nrow(spvl_md))
+	#spvl_md <- demog_md_choice %>% left_join(vl_md_preart, by="patientindex", relationship="many-to-many") %>% filter( (vl_decimal_date - hivpos_decimal_date >= 0.5) & (vl_decimal_date - hivpos_decimal_date <= 2))
+	spvl_md <- demog_md_choice %>% left_join(vl_md_preart, by="patientindex", relationship="many-to-many") %>% 
+		filter( (vl_decimal_date - hivpos_decimal_date >= 0) & (vl_decimal_date - hivpos_decimal_date <= 2) & (vl_decimal_date <= artstart_decimal_date)) 
 	print("unique patient vl pre-art")
 	print(length(unique(spvl_md$patientindex)))
 	
@@ -78,21 +82,12 @@ for(i in 1:length(tree_names)) {
 	print(tree_names[[i]])
 	vl_subtypes[[i]] <- get_vl(demog_md_subtype_match, subtype_choices[i])
 }
-#saveRDS(vl_subtypes, glue("{RDS_PATH}/vl_subtypes.rds"))
+saveRDS(vl_subtypes, glue("{RDS_PATH}/vl_subtypes.rds"))
 vl_subtypes <- readRDS("rds/vl_subtypes.rds")
-
-# Mean VL measurements before treatment (without excluding phylotypes with less than e.g. 10 measurements)
-vl_subtypes_all <- list(vl_subtypes[[1]][[1]], vl_subtypes[[2]][[1]], vl_subtypes[[3]][[1]], vl_subtypes[[4]][[1]])
-vl_subtypes_all <- bind_rows(vl_subtypes_all); print(nrow(vl_subtypes_all)); print(length(unique(vl_subtypes_all$patientindex))) #50667 rows, 15702 unique patients 
-spvl_measur <- vl_subtypes_all %>% add_count(patientindex, name="n_spvl") %>% group_by(patientindex) %>% filter(row_number() >= (n())) #filter(n() == 1)
-mean(spvl_measur$n_spvl) # 3.226
-sd(spvl_measur$n_spvl) # 2.533
-median(spvl_measur$n_spvl) # 2
-IQR(spvl_measur$n_spvl); table(spvl_measur$n_spvl); hist(spvl_measur$n_spvl) # 4
 
 treestruct_min_cl_size_res_yes_sup <- readRDS(glue("{RDS_PATH}/treestruct_min_cl_size_res_yes_sup.rds")) 
 
-# create matrix for each mcs and subtype + summarise log_vl to get only one per patient (treestructure phylotypes)
+# create matrix for each mcs and subtype + summarise log_vl (mean) to get only one per patient (treestructure phylotypes)
 vl_subtypes_comb1 <- vl_subtypes_comb2 <- vl_subtypes_mean_p_pat <- vl_subtypes_comb3 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
 for(i in 1:length(min_cl_size_choices)) {
 	for(j in 1:length(tree_names)) {
@@ -107,13 +102,38 @@ for(i in 1:length(min_cl_size_choices)) {
 		vl_subtypes_comb2[[i,j]] <- inner_join(vl_subtypes_comb1[[i,j]], vl_subtypes_mean_p_pat[[i,j]], by="patientindex")
 		print(nrow(vl_subtypes_comb2[[i,j]]))
 		print(nrow(vl_subtypes_comb2[[i,j]][ is.na(vl_subtypes_comb2[[i,j]]$mean_log_vl_pat), ]))
+		vl_subtypes_comb3[[i,j]] <- inner_join(vl_subtypes_comb1[[i,j]], vl_subtypes[[j]][[1]], by="patientindex")
 		print("===")
 	}
 }
+saveRDS(vl_subtypes_comb1, glue("{RDS_PATH}/vl_subtypes_comb1.rds"))
 saveRDS(vl_subtypes_comb2, glue("{RDS_PATH}/vl_subtypes_comb2.rds"))
-# A1: 757 patients, CRF_02_AG: 935, C: 2371, B: 8810
 
-# Estimating group-level differences using a multi-level Bayesian model (thanks Chris Wymant for the advice: https://htmlpreview.github.io/?https%3A//github.com/ChrisHIV/teaching/blob/main/other_topics/Stan_example_hierarchical_model_false_positives.html)
+# Mean VL measurements before treatment (without excluding phylotypes with less than e.g. 10 measurements)
+vl_subtypes_all <- list(vl_subtypes_comb3[[1,1]], vl_subtypes_comb3[[1,2]], vl_subtypes_comb3[[1,3]], vl_subtypes_comb3[[1,4]])
+vl_subtypes_all <- bind_rows(vl_subtypes_all); print(nrow(vl_subtypes_all)); print(length(unique(vl_subtypes_all$patientindex))) #41185 rows, 12833 unique patients 
+vl_measur <- vl_subtypes_all %>% add_count(patientindex, name="n_vl") %>% group_by(patientindex) %>% filter(row_number() >= (n())) #filter(n() == 1)
+mean(vl_measur$n_vl) # 3.21
+sd(vl_measur$n_vl) # 2.53
+median(vl_measur$n_vl) # 2
+#IQR(vl_measur$n_vl);
+calc_iqr(vl_measur$n_vl) #1-5
+table(vl_measur$n_vl); hist(vl_measur$n_vl)
+# 1    2    3    4    5    6    7    8    9   10   11   12   13   14   15   16   17 
+# 4699 2188 1383 1127  924  779  706  517  262  128   57   31   17    7    4    3    1 
+
+# For table 1
+tab1_vl_ss <- readRDS(glue("{RDS_PATH}/vl_subtypes_comb2.rds"))
+tab1_vl_ss[[1,1]]$subtype <- tree_names[1]; tab1_vl_ss[[1,2]]$subtype <- tree_names[2] 
+tab1_vl_ss[[1,3]]$subtype <- tree_names[3]; tab1_vl_ss[[1,4]]$subtype <- tree_names[4] 
+tab1_vl_ss_all <- rbind( tab1_vl_ss[[1,1]], tab1_vl_ss[[1,2]], tab1_vl_ss[[1,3]], tab1_vl_ss[[1,4]] )
+print(nrow(tab1_vl_ss_all))
+tab1_vl_ss_all %>% group_by(subtype) %>% summarise(n=n())
+# A1: 755 patients, CRF_02_AG: 935, C: 2356, B: 8789
+
+### Model 1: Estimating group-level differences using a multi-level Bayesian model
+# Huge thanks to Chris Wymant for the advice and code: 
+# https://htmlpreview.github.io/?https%3A//github.com/ChrisHIV/teaching/blob/main/other_topics/Stan_example_hierarchical_model_false_positives.html
 libs_load2 <- c("tidyverse","rstan","ggforce", "Rcpp", "bayesplot")
 invisible( lapply(libs_load2, library, character.only=TRUE) )
 
@@ -122,8 +142,8 @@ rstan_options(auto_write = TRUE)            # avoid re-compiling stan code
 theme_set(theme_classic())
 set.seed(123946)
 
-ITER <- 4000 #TODO change to 10000
-CHAINS <- 2 #TODO change to 2
+ITER <- 4000
+CHAINS <- 2
 model_compiled <- stan_model(file="scripts/stan/vl_model.stan")
 
 vl_bayes_model <- function(vl_subtypes_c, mcs_subtype_choice, partition_method_lbl, model_compiled) {
@@ -142,25 +162,13 @@ vl_bayes_model <- function(vl_subtypes_c, mcs_subtype_choice, partition_method_l
 	print(y_sd)
 	# y_sd_group <- 0.5???
 	
-	# TODO uncomment: exploratory plots
 	pl1 <- ggplot(vl_subtypes_c, aes(x=as.factor(cluster), y=mean_log_vl_pat)) +
 		geom_violin() + geom_sina() + labs(x = "phylotype") + theme(axis.text=element_text(size=6),axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
 	system(glue("mkdir -p {RESULTS_PATH}/05_vl_{partition_method_lbl}/"))
 	ggsave(plot=pl1, filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_expl.jpg"), width=10, height=8, dpi=300)
 
 	# The following Stan code (stored as a string in R) estimates those parameters of the data-generating process that we don’t
-	# condition on. The likelihood it uses matches the one we used to generate the data.
-	
-	# parameters {
-	# 	// Top-level parameters
-	# 	real<lower = 2, upper = 7> y_mean_pop;
-	# 	real<lower = 0,   upper = 2> y_sd;
-	# 	real<lower = 0,   upper = 5> y_sd_group;
-	# 	// Lower-level parameters (with a non-centred parameterisation for numerical
-	# 																												// efficiency, see e.g.
-	# 																												// https://mc-stan.org/docs/2_18/stan-users-guide/reparameterization-section.html
-	# 																												vector[num_groups] group_effects_unscaled;
-	# }
+	# condition on. The likelihood it uses matches the one we used to generate the data
 
 	vl_subtypes_c$cluster <- as.integer(vl_subtypes_c$cluster)
 	
@@ -188,7 +196,6 @@ vl_bayes_model <- function(vl_subtypes_c, mcs_subtype_choice, partition_method_l
 	print("Any n_eff < 400?")
 	print(any(fit_summary$summary[, "n_eff"] < 400))
 
-	# TODO printing empty PDF
 	# pdf(glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_traceplot_model.pdf"), width = 10, height = 7)
 	# traceplot(fit, pars=names(fit)[1:10], inc_warmup=TRUE) # there are a lot more, just plotting 10 to explore
 	# dev.off()
@@ -204,8 +211,33 @@ vl_bayes_model <- function(vl_subtypes_c, mcs_subtype_choice, partition_method_l
 	# posterior predictive checks (PPCs)
 	# Extract posterior predictive samples
 	print("Doing and plotting posterior predictive checks (PPCs)")
-	posterior_samples <- extract(fit)
+	posterior_samples <- rstan::extract(fit)
 	y_rep <- posterior_samples$y_rep
+	#print("by group")
+	print(names(posterior_samples))
+	# print("mean")
+	# print(head(posterior_samples$y_mean))
+	
+	# compute the variance explained in viral load (by this rstan model), we need to calculate the proportion of the total variance in
+	# y that is explained by the group effects and the overall population-level effects
+	# 1. Extract posterior samples for y_sd, y_sd_group, and group_effects_unscaled
+	y_sd <- posterior_samples$y_sd  # Residual SD
+	y_sd_group <- posterior_samples$y_sd_group  # Group-level SD
+	# 2. Compute variances
+	var_group <- y_sd_group^2  # Variance explained by group effects
+	var_residual <- y_sd^2     # Residual variance
+	var_total <- var_group + var_residual  # Total variance
+	# 3. calculate R-squared for each posterior sample
+	r_squared <- var_group / var_total
+	# 4. summarize R-squared (mean, median, CIs)
+	mean_r2 <- mean(r_squared)
+	median_r2 <- median(r_squared)
+	ci_r2 <- quantile(r_squared, probs = c(0.025, 0.975))
+	print(paste("Mean R-squared:", mean_r2))
+	print(paste("Median R-squared:", median_r2))
+	print("95% Credible Interval for R-squared:")
+	df_r2 <- data.frame(median_r2=median_r2, lower_ci=unname(ci_r2[1]), upper_ci=unname(ci_r2[2]))
+	print(df_r2)
 	
 	rm(fit)
 	gc()
@@ -225,11 +257,11 @@ vl_bayes_model <- function(vl_subtypes_c, mcs_subtype_choice, partition_method_l
 	
 	# PPC with bayesplot
 	ppc_dens_overlay(vl_subtypes_c$mean_log_vl_pat, y_rep[1:50, ])
-	ggsave(filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_ppc_dens_overlay_bp_.jpg"), width=8, height=6, dpi=300)
+	ggsave(filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_ppc_dens_overlay_bp_.jpg"), width=8, height=6, dpi=300, bg="white")
 	ppc_stat(vl_subtypes_c$mean_log_vl_pat, y_rep, stat = "mean")
-	ggsave(filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_ppc_stat_mean_bp_.jpg"), width=8, height=6, dpi=300)
+	ggsave(filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_ppc_stat_mean_bp_.jpg"), width=8, height=6, dpi=300, bg="white")
 	ppc_stat(vl_subtypes_c$mean_log_vl_pat, y_rep, stat = "sd")
-	ggsave(filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_ppc_stat_sd_bp_.jpg"), width=8, height=6, dpi=300)
+	ggsave(filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_ppc_stat_sd_bp_.jpg"), width=8, height=6, dpi=300, bg="white")
 	
 	data_sample_prior <- list(
 		num_groups = max(vl_subtypes_c$cluster,na.rm=T),
@@ -333,7 +365,8 @@ vl_bayes_model <- function(vl_subtypes_c, mcs_subtype_choice, partition_method_l
 		list(freq_estimate = summary_$coefficients[1,1] + summary_$coefficients[2,1],
 							freq_p = summary_$coefficients[2,4],
 							freq_lower = summary_$coefficients[1,1] + confint_[2,1],
-							freq_upper = summary_$coefficients[1,1] + confint_[2,2])
+							freq_upper = summary_$coefficients[1,1] + confint_[2,2], 
+							adj_r_squared = summary_$adj.r.squared)
 	}
 
 	print("Plotting comparison against simpler lm model")
@@ -367,20 +400,19 @@ vl_bayes_model <- function(vl_subtypes_c, mcs_subtype_choice, partition_method_l
 	write.csv(sig_lower, file=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_sig_lower_vl.csv"), quote=F, row.names = F)
 
 	print("Saving fits to rds if needed")
-	saveRDS(df_fit, glue("{RDS_PATH}/df_fit_{partition_method_lbl}_{mcs_subtype_choice}.rds"))
+	#saveRDS(df_fit, glue("{RDS_PATH}/df_fit_{partition_method_lbl}_{mcs_subtype_choice}.rds"))
  rm(df_fit)
  gc()
-	saveRDS(df_prior, glue("{RDS_PATH}/df_prior_{partition_method_lbl}_{mcs_subtype_choice}.rds"))
+	#saveRDS(df_prior, glue("{RDS_PATH}/df_prior_{partition_method_lbl}_{mcs_subtype_choice}.rds"))
 	rm(df_prior)
 	gc()
- #list(df_fit=df_fit, df_prior=df_prior, df_table=df_table, sig_higher=sig_higher, sig_lower=sig_lower, pl2=pl2, pl3=pl3, pl4=pl4, pl5=pl5)
-	#list(df_fit=df_fit, df_table=df_table, sig_higher=sig_higher, sig_lower=sig_lower)
-	list(df_table=df_table, sig_higher=sig_higher)
+
+	list(df_table=df_table, sig_higher=sig_higher, df_compare=df_compare, df_r2=df_r2)
 }
 
 res_vl_model_ts <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
 for(i in 1:length(min_cl_size_choices)) { #length(min_cl_size_choices)
-	for(j in 1:length(tree_names)) {
+	for(j in 1:length(tree_names)) { #length(tree_names)
 		print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
 		res_vl_model_ts[[i,j]] <- vl_bayes_model(vl_subtypes_comb2[[i,j]], glue("{min_cl_size_choices[i]}-{tree_names[j]}"), "treestructure", model_compiled)
 	}
@@ -388,20 +420,53 @@ for(i in 1:length(min_cl_size_choices)) { #length(min_cl_size_choices)
 
 saveRDS(res_vl_model_ts, glue("{RDS_PATH}/res_vl_model.rds"))
 
-# rm(res_vl_model)
-# gc()
+# Table S7: bayes vl model estimates
+vl_tables <- readRDS( glue("{RDS_PATH}/res_vl_model.rds") )
+vl_tables[[1,1]]$df_table$subtype <- tree_names[1]; vl_tables[[1,2]]$df_table$subtype <- tree_names[2] 
+vl_tables[[1,3]]$df_table$subtype <- tree_names[3]; vl_tables[[1,4]]$df_table$subtype <- tree_names[4] 
+vl_table <- rbind( vl_tables[[1,1]]$df_table, vl_tables[[1,2]]$df_table, vl_tables[[1,3]]$df_table, vl_tables[[1,4]]$df_table )
+vl_table <- vl_table %>% dplyr::select( subtype, group, quantile_0.025, quantile_0.5, quantile_0.975, y_mean_pop, p  )
+vl_table <- vl_table %>% arrange( p, desc(quantile_0.5) )
+vl_table$quantile_0.025 <- round(vl_table$quantile_0.025,3)
+vl_table$quantile_0.5 <- round(vl_table$quantile_0.5,3)
+vl_table$quantile_0.975 <- round(vl_table$quantile_0.975,3)
+vl_table$y_mean_pop <- round(vl_table$y_mean_pop,3)
+vl_table$p <- signif(vl_table$p, digits = 2)
+options(scipen=999)
+write.csv( vl_table, file=glue("{RESULTS_PATH}/tables/tableS7.csv"), quote=F, row.names = F )
 
-# top10 median estim now: 40, 101, 69, 125, 79, 20, 138, 122, 142, 137 (4 match previous SPVL-VOIs)
-# previous SPVL-VOIs (not in order): 5,15,20(ok),24,26,40(ok),44,53,69(ok),81,115,121,137(ok)
-# lm model seems to overestimate median and overall effect
+# Fig. 2A: estimates with CIs for significantly lower and higher VLs
+subtype_b_vois_ids_only <- c(40,69,133)
+vl_table_B <- vl_tables[[1,4]]$df_table
+mean_vl_pop <- unique(vl_table_B$y_mean_pop)
+vl_table_B <- vl_table_B %>% dplyr::select( subtype, group, quantile_0.025, quantile_0.5, quantile_0.975, p )
+backbone_cl_control <- readRDS(glue("{RDS_PATH}/backbone_cl_control.rds"))
+vl_table_B_sel <- vl_table_B %>% filter( group == backbone_cl_control[[1,4]] | p <= 0.05 | group %in% subtype_b_vois_ids_only ) # last condition to include PT133
+vl_table_B_sel$phylotype <- paste0("PT.B.",vl_table_B_sel$group,".UK")
+vl_table_B_sel$phylotype[vl_table_B_sel$phylotype == "PT.B.153.UK"] <- "Backbone"
+custom_order <- c("Backbone", "PT.B.8.UK", "PT.B.12.UK", "PT.B.20.UK", 
+																		"PT.B.27.UK", "PT.B.40.UK", "PT.B.69.UK", "PT.B.83.UK", "PT.B.101.UK", "PT.B.133.UK")
+ordered_vl_sig <- vl_table_B_sel$phylotype[match(custom_order, vl_table_B_sel$phylotype)]
+vl_table_B_sel$phylotype <- factor(vl_table_B_sel$phylotype, levels = ordered_vl_sig)
 
-# no signif diff for any mcs on the other 3 subtypes
-# B30: 4 (40[ok],101[no],69[ok],20[ok]) higher, 5 lower
-# B50: 3 higher (14[ok],27[ok],52[ok]), 2 lower
-# B100: 1 higher (11[no]), 2 lower
+vl_pal_vois <- c("PT.B.40.UK"="#56B4E9", "PT.B.69.UK"="#D55E00", "PT.B.133.UK"="#009E73", "Backbone"="#999999", "Other PTs"="grey25")
 
-# same model for fastbaps partitions
+vl_table_B_sel$phylotype_display <- ifelse( vl_table_B_sel$phylotype %in% names(vl_pal_vois), as.character(vl_table_B_sel$phylotype), "Other PTs")
+
+f2a_vl <- ggplot(data=vl_table_B_sel, aes(color=phylotype_display)) +
+	#geom_errorbar(aes(x = phylotype, ymin = quantile_0.025, ymax = quantile_0.975), col = "blue") +
+	geom_hline(yintercept = mean_vl_pop, linetype = "dashed") +
+	geom_pointrange(aes(x=phylotype, y=quantile_0.5, ymin = quantile_0.025, ymax = quantile_0.975), size = 0.25) + #color = "grey25"
+	scale_color_manual(values=vl_pal_vois, name="Phylotype") + #+ scale_fill_manual(values=ne_pt_pal, name="Phylotype") +
+	#scale_y_continuous(limits=c(4.2,5.2)) +
+	labs(x = "Phylotype", y=bquote(bold("Viral load estimate and 95% CIs ("~log[10]~"copies / mL)"))) + theme_classic() + 
+	theme(axis.text.x = element_text(angle = 45,hjust = 1, size=8), axis.text=element_text(size=8)) + leg #legend.position = c(0.201,0.75)
+saveRDS(f2a_vl, glue("{RDS_PATH}/f2a_vl.rds"))
+
+### same model for fastbaps partitions (only doing for subtype B as none other PT signif in VL analysis in other subtypes) ###
+fastbaps_df_list <- readRDS(glue("{RDS_PATH}/fastbaps_df_list.rds"))
 vl_subtypes_comb_fb <- vl_subtypes_comb_fb2 <- vl_subtypes_mean_p_pat_fb <- list()
+res_vl_model_fb <- list()
 for(j in 1:length(tree_names)) {
 	print(glue("{tree_names[j]}"))
 	print("fastbaps matching")
@@ -415,11 +480,6 @@ for(j in 1:length(tree_names)) {
 	print(nrow(vl_subtypes_comb_fb2[[j]]))
 	print(nrow(vl_subtypes_comb_fb2[[j]][ is.na(vl_subtypes_comb_fb2[[j]]$mean_log_vl_pat), ]))
 	print("===")
-}
-
-res_vl_model_fb <- list()#length(min_cl_size_choices)
-for(j in 1:length(tree_names)) {
-	print(glue("{tree_names[j]}"))
 	if(length(unique(vl_subtypes_comb_fb2[[j]]$cluster)) != 1) {
 		res_vl_model_fb[[j]] <- vl_bayes_model(vl_subtypes_comb_fb2[[j]], glue("{tree_names[j]}"), "fastbaps", model_compiled)
 	}
@@ -462,3 +522,213 @@ View(inner_join_vl_vois)
 # trestruct VOIs estimates (PT101, PT20, PT40, PT69): 4.90, 4.81 (no correspondence), 4.91, 4.86
 # fastbaps VOIs estimates (PT21, x, PT3, PT118):      4.79, no correspondence,        4.85, 4.79
 # the PT that does not match (PT20 from trestruct is paraphyletic!)
+
+### same model for treecluster partitions gd=0.075, method=avg_clade (only doing for subtype B as none other PT signif in VL analysis in other subtypes) ###
+res_treecluster <- glue("{RESULTS_PATH}/03_treecluster/B/")
+vl_b_tc <- read.table(glue("{res_treecluster}/B_gd_0.075_avg_clade.log"), header=T) #24095
+vl_b_tc <- vl_b_tc[vl_b_tc$ClusterNumber != -1,] # singletons removed
+print(nrow(vl_subtypes[[4]][[2]])) #13349
+vl_b_comb_tc <- inner_join(vl_b_tc, vl_subtypes[[4]][[2]], by=c("SequenceName"="testindex"))
+print(nrow(vl_b_comb_tc)) # 8809
+vl_b_mean_p_pat_tc <- vl_subtypes[[4]][[1]] %>% group_by(patientindex) %>% summarise(mean_log_vl_pat=mean(log_vl))
+print(nrow(vl_b_mean_p_pat_tc)) #10903
+vl_b_comb_tc2 <- inner_join(vl_b_comb_tc, vl_b_mean_p_pat_tc, by="patientindex")
+print(nrow(vl_b_comb_tc2)) #8809
+colnames(vl_b_comb_tc2) <- c("testindex","cluster","patientindex", "mean_log_vl_pat")
+
+# Run VL model (subtype B only)
+res_vl_model_tc <- vl_bayes_model(vl_b_comb_tc2, "B", "treecluster", model_compiled)
+saveRDS(res_vl_model_tc, glue("{RDS_PATH}/res_vl_model_tc.rds"))
+res_vl_model_tc <- readRDS(glue("{RDS_PATH}/res_vl_model_tc.rds"))
+higher_vl_B_tc <- get_tips_cluster_id(vl_b_comb_tc2, "testindex", res_vl_model_tc$sig_higher) # 5 clusters, 568 sequences
+inner_join_vl_vois_ts_tc <- inner_join(higher_vl_B_ts, higher_vl_B_tc, by="tips") # 153 matches, all from ts
+# n=20 PT101 matches PT127 (+86 in tc), n=38 PT40 matches PT113 (+131 in tc), n=26 PT69 matches PT8 (+16 in tc), 
+# n=69 PT20 matches PT20 (+48 in tc); one phylotype with >VL from tc not from ts: PT57 (142 seqs)
+# trestruct VOIs estimates   (PT101, PT20, PT40, PT69, x):    4.90, 4.81, 4.91, 4.86, x
+# treecluster VOIs estimates (PT127, PT20, PT113, PT8, PT57): 4.72, 4.73, 4.83, 4.77, 4.70
+res_vl_model_tc <- readRDS(glue("{RDS_PATH}/res_vl_model_tc.rds"))
+
+# plot correlation of bayes and lm model mean estimates for partitioning methods separately
+plot_corr_vl_models_bayes_lm <- function(estims_df, mcs_subtype_choice, partition_method_lbl) {
+	corr <- cor(estims_df$freq_estimate, estims_df$quantile_0.5)
+	pl <- ggplot(estims_df, aes(x = freq_estimate, y = quantile_0.5)) +
+		#geom_segment(aes(x = y_true, y = y_true, xend = quantile_0.5, yend = freq_estimate)) +
+		geom_point(aes(x = quantile_0.5, y = freq_estimate)) +
+		geom_abline(linetype = "dashed") +
+		geom_smooth(method = "lm", color = "blue", se = FALSE) +
+		annotate("text", x = max(estims_df$freq_estimate) - 1, y = max(estims_df$quantile_0.5), 
+											label = paste("r =", round(corr, 2)), 
+											size = 5, color = "black") +  # Annotate with correlation coefficient
+		theme_classic()
+	ggsave(plot=pl, filename=glue("{RESULTS_PATH}/05_vl_{partition_method_lbl}/{mcs_subtype_choice}_corr_bayes_lm.jpg"), width=10, height=7, dpi=300)
+}
+
+# treestructure mcs=30, subtype B
+plot_corr_vl_models_bayes_lm(res_vl_model_ts[[1,4]]$df_compare, "30-B", "treestructure")
+# fastbaps optimise.symmetric, subtype B
+plot_corr_vl_models_bayes_lm(res_vl_model_fb[[4]]$df_compare, "B", "fastbaps")
+# treecluster gd=0.075, method=avg_clade, subtype B
+plot_corr_vl_models_bayes_lm(res_vl_model_tc$df_compare, "B", "treecluster")
+
+# variance explained in different partition methods
+res_vl_model_ts <- readRDS("rds/res_vl_model.rds")
+res_vl_model_fb <- readRDS("rds/res_vl_model_fb.rds")
+res_vl_model_tc <- readRDS("rds/res_vl_model_tc.rds")
+res_vl_model_ts[[1,4]]$df_r2$method <- "treestructure (min. clade size = 30)"
+res_vl_model_ts[[2,4]]$df_r2$method <- "treestructure (min. clade size = 50)"
+res_vl_model_ts[[3,4]]$df_r2$method <- "treestructure (min. clade size = 100)"
+res_vl_model_ts_all <- rbind(res_vl_model_ts[[1,4]]$df_r2, res_vl_model_ts[[2,4]]$df_r2, res_vl_model_ts[[3,4]]$df_r2)
+res_vl_model_fb[[4]]$df_r2$method <- "fastbaps"
+res_vl_model_tc$df_r2$method <- "treecluster"
+comb_var_expl <- rbind( res_vl_model_ts_all,  res_vl_model_fb[[4]]$df_r2, res_vl_model_tc$df_r2)
+View(comb_var_expl)
+ggplot(comb_var_expl) + geom_errorbar(aes(x = method, ymin = lower_ci, ymax = upper_ci)) + geom_point(aes(x = method, y = median_r2)) + 
+	labs(x="Method", y = expression(R^2)) + theme_classic() + theme(axis.text=element_text(family=helv, color="black"), axis.title=element_text(family=helv, color="black"))
+
+# variance explained by lm models (adj_r_squared)
+res_vl_model_ts[[1,4]]$df_compare$method <- "treestructure (min. clade size = 30)"
+res_vl_model_ts[[2,4]]$df_compare$method <- "treestructure (min. clade size = 50)"
+res_vl_model_ts[[3,4]]$df_compare$method <- "treestructure (min. clade size = 100)"
+res_vl_model_ts_all2 <- rbind(res_vl_model_ts[[1,4]]$df_compare, res_vl_model_ts[[2,4]]$df_compare, res_vl_model_ts[[3,4]]$df_compare)
+res_vl_model_fb[[4]]$df_compare$method <- "fastbaps"
+res_vl_model_tc$df_compare$method <- "treecluster"
+
+comb_var_expl_lm <- rbind( res_vl_model_ts_all2,  res_vl_model_fb[[4]]$df_compare, res_vl_model_tc$df_compare)
+#View(comb_var_expl_lm)
+ggplot(comb_var_expl_lm) + geom_point(aes(x = method, y = adj_r_squared)) + theme_classic() #geom_errorbar(aes(x = method, ymin = lower_ci, ymax = upper_ci))
+
+# overlay them
+comb_var_expl$model <- "Bayesian joint model"
+comb_var_expl_lm$model <- "Linear model"
+combined_data <- bind_rows(
+	comb_var_expl %>% rename(y = median_r2),
+	comb_var_expl_lm %>% rename(y = adj_r_squared)
+)
+combined_data$method <- factor(combined_data$method, levels = c("treestructure (min. clade size = 30)", "treestructure (min. clade size = 50)", "treestructure (min. clade size = 100)", "fastbaps", "treecluster"))
+pal_bayes_lm_var_expl <- c("Bayesian joint model"="#999999", "Linear model"="black")
+plot_var_expl_vl <- ggplot(combined_data) +
+	geom_errorbar(data = subset(combined_data, model == "Bayesian joint model"), aes(x = method, ymin = lower_ci, ymax = upper_ci, color = model),width = 0.2) +
+	geom_point(aes(x = method, y = y, color = model), size = 1) + scale_color_manual(values=pal_bayes_lm_var_expl, name="Viral load model") +
+	labs(x = "Partitioning method", y = bquote("Variance explained (" ~ R^2 ~ ")") ) + #color = "Viral load model"
+	theme_classic() +
+	theme(axis.text = element_text(family = helv, color = "black"),axis.title = element_text(family = helv, color = "black"),
+							axis.text.x = element_text(angle = 60, hjust = 1))
+	
+# Figure S4
+ggsave(plot = plot_var_expl_vl, filename = glue("{RESULTS_PATH}/figs/figS4.jpg"), dpi = 600, width = 8, height = 6, bg = "white")
+ggsave(plot = plot_var_expl_vl, filename = glue("{RESULTS_PATH}/figs/figS4.eps"), dpi = 600, width = 8, height = 6, bg = "white")
+
+### Model 2: Welch's T-test with confints based on lm and adjusted for multiple testing
+
+# vl_subtypes_comp_bef_ttest_clusts have clusters and vl_subtypes_comp_bef_ttest_ref have backbone mean_vls
+
+vl_subtypes_comp_bef_ttest_clusts <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
+vl_subtypes_comp_bef_ttest_ref <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
+for(i in 1:length(min_cl_size_choices)) { #length(min_cl_size_choices)
+	for(j in 1:length(tree_names)) {
+		print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
+		vl_subtypes_comp_bef_ttest_clusts[[i,j]] <- split(vl_subtypes_comb2[[i,j]], vl_subtypes_comb2[[i,j]]$cluster)
+		for(k in 1:length(vl_subtypes_comp_bef_ttest_clusts[[i,j]])) {
+			if( (k != as.integer(backbone_cl_control[[i,j]])) & (!is.null(extracted_clusters[[i,j]][[1]][[k]]$tip.label)) ) {
+				vl_subtypes_comp_bef_ttest_clusts[[i,j]][[k]] <- vl_subtypes_comb2[[i,j]][vl_subtypes_comb2[[i,j]]$cluster == k,]
+			} else {
+				vl_subtypes_comp_bef_ttest_clusts[[i,j]][[k]] <- NULL
+			}
+		}
+		vl_subtypes_comp_bef_ttest_ref[[i,j]][[1]] <- vl_subtypes_comb2[[i,j]][vl_subtypes_comb2[[i,j]]$cluster == as.integer( backbone_cl_control[[i,j]] ),]
+	}
+}
+
+
+t_test_diff_means_vl <- function(vl_subtypes_c, vl_subtypes_ref, extr_clusters, backbone_control, subtype_choice) {
+	ttest <- ttest_res <- lm_vl <- confints <-  list() #sds
+	for(k in 1:length(extr_clusters[[1]])) {
+		print(k)
+		if(length(unique(vl_subtypes_c[[k]]$patientindex)) < 10) {
+			ttest[[k]] <- NULL
+			print("Less than 10 patients, not computing!")
+		} else {
+			ttest[[k]] <- t.test(vl_subtypes_c[[k]]$mean_log_vl_pat, vl_subtypes_ref[[1]]$mean_log_vl_pat, alternative="greater")
+			combined_clust_backb <- rbind(vl_subtypes_c[[k]], vl_subtypes_ref[[1]])
+			ttest_res[[k]] <- data.frame(phylotype=k, rows_x=nrow(vl_subtypes_c[[k]]), estimate_x=round(ttest[[k]]$estimate[[1]],3), 
+																																#lower_ci=(summ$coefficients[1,1] + confints[[k]][2,1]), upper_ci=(summ$coefficients[1,1] + confints[[k]][2,2]),
+																																estimate_y=round(ttest[[k]]$estimate[[2]],3), p_value=ttest[[k]]$p.value, sd_x=round(sd(vl_subtypes_c[[k]]$mean_log_vl_pat),3), 
+																																sd_y=round(sd(vl_subtypes_ref[[1]]$mean_log_vl_pat),3))
+			ttest_res[[k]]$p_value <- signif(ttest_res[[k]]$p_value, digits = 2)
+		}
+		ttest_res_list <- rbindlist(ttest_res)
+		
+		# results un-adjusted for multiple testing
+		system(glue("mkdir -p {RESULTS_PATH}/05_vl_ttest_treestructure/all_unadj/"))
+		write.csv(ttest_res_list, file=glue("{RESULTS_PATH}/05_vl_ttest_treestructure/all_unadj/{subtype_choice}_vl.csv"), quote=F, row.names=F) # join all of those for mcs=30 for table S8
+		
+		ttest_res_list_sig <- ttest_res_list[ttest_res_list$p_value <= 0.05, ]
+		system(glue("mkdir -p {RESULTS_PATH}/05_vl_ttest_treestructure/sig_unadj/"))
+		write.csv(ttest_res_list_sig, file=glue("{RESULTS_PATH}/05_vl_ttest_treestructure/sig_unadj/{subtype_choice}_vl.csv"), quote=F, row.names=F)
+		
+		# results adjusted for multiple testing
+		ttest_res_list_p <- ttest_res_list$p_value
+		
+		.adjust_methods <- function(ps, method) {
+			res_adj <- p.adjust(ps, method = method)
+			res_adj
+		}
+		
+		bonf <- .adjust_methods(ttest_res_list_p, "bonferroni")
+		fdrr <- .adjust_methods(ttest_res_list_p, "fdr")
+		
+		ttest_res_list_adj <- ttest_res_list
+		ttest_res_list_adj$p_adj_bonf <- bonf
+		ttest_res_list_adj$p_adj_fdr <- fdrr
+		
+		# all adjusted
+		system(glue("mkdir -p {RESULTS_PATH}/05_vl_ttest_treestructure/all_adj/"))
+		write.csv(ttest_res_list_adj, file=glue("{RESULTS_PATH}/05_vl_ttest_treestructure/all_adj/{subtype_choice}_vl.csv"), quote=F, row.names=F)
+		
+		# bonferroni corrected
+		system(glue("mkdir -p {RESULTS_PATH}/05_vl_ttest_treestructure/sig_adj_bonf/"))
+		ttest_res_list_adj_bonf <- ttest_res_list_adj[ttest_res_list_adj$p_adj_bonf <= 0.05,]
+		write.csv(ttest_res_list_adj_bonf, file=glue("{RESULTS_PATH}/05_vl_ttest_treestructure/sig_adj_bonf/{subtype_choice}_vl.csv"), quote=F, row.names=F)
+		
+		# fdr corrected
+		system(glue("mkdir -p {RESULTS_PATH}/05_vl_ttest_treestructure/sig_adj_fdr/"))
+		ttest_res_list_adj_fdr <- ttest_res_list_adj[ttest_res_list_adj$p_adj_fdr <= 0.05,]
+		write.csv(ttest_res_list_adj_fdr, file=glue("{RESULTS_PATH}/05_vl_ttest_treestructure/sig_adj_fdr/{subtype_choice}_vl.csv"), quote=F, row.names=F)
+		
+		#View(ttest_res_list)
+	}
+	list(all_adj=ttest_res_list_adj, sig_unadj=ttest_res_list_sig, sig_adj_bonf=ttest_res_list_adj_bonf, sig_adj_fdr=ttest_res_list_adj_fdr, ttest_res_list=ttest_res_list)
+}
+
+rm_paraphyletic_pt_alns <- readRDS("rds/rm_paraphyletic_pt_alns.rds")
+extracted_clusters <- readRDS("rds/extracted_clusters.rds")
+vl_st_test <- vl_vois_incl_parap <- vl_vois_excl_parap <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(subtype_choices))
+for(i in 1:length(min_cl_size_choices)) {
+	for(j in 1:length(tree_names)) {
+		print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
+		vl_st_test[[i,j]] <- t_test_diff_means_vl(vl_subtypes_comp_bef_ttest_clusts[[i,j]], vl_subtypes_comp_bef_ttest_ref[[i,j]], extracted_clusters[[i,j]], backbone_cl_control[[i,j]], glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
+		# matrix with vl VOIs (incl parap)
+		#vl_vois_incl_parap[[i,j]] <- as.integer(unique(vl_st_test[[i,j]]$phylotype))
+		# matrix with vl VOIs (excl parap)
+		#vl_vois_excl_parap[[i,j]] <- setdiff(vl_vois_incl_parap[[i,j]], as.integer(rm_paraphyletic_pt_alns[[i,j]]) )
+	}
+}
+sum(vl_st_test[[1,4]]$ttest_res_list$rows_x) # number of patients in t-test analysis (after removing PTs with <10 patients)
+vl_st_test[[1,4]]$sig_unadj$phylotype #|> length() #29
+vl_st_test[[1,4]]$sig_adj_bonf$phylotype #PTs 20,40 (overlap bayes ones, but 2 missing [69 and 101])
+vl_st_test[[1,4]]$sig_adj_fdr$phylotype #|> length() #7 PTs: 4,20,40,69,79,125,137 (overlap with 20,40 from bayes; 69 from before and bayes; 137 from before; 4, 79 and 125 new)
+vl_st_test[[1,4]]$all_adj$phylotype #|> length() #115
+saveRDS(vl_st_test, glue("{RDS_PATH}/vl_st_test.rds"))
+
+# Table S6: T-test on viral loads corrected by multiple testing
+vl_tables_ttest <- readRDS(glue("{RDS_PATH}/vl_st_test.rds"))
+vl_tables_ttest[[1,1]]$all_adj$subtype <- tree_names[1]; vl_tables_ttest[[1,2]]$all_adj$subtype <- tree_names[2] 
+vl_tables_ttest[[1,3]]$all_adj$subtype <- tree_names[3]; vl_tables_ttest[[1,4]]$all_adj$subtype <- tree_names[4] 
+vl_table_ttest <- rbind( vl_tables_ttest[[1,1]]$all_adj, vl_tables_ttest[[1,2]]$all_adj, vl_tables_ttest[[1,3]]$all_adj, vl_tables_ttest[[1,4]]$all_adj )
+vl_table_ttest <- vl_table_ttest %>% dplyr::select( subtype, phylotype, rows_x, estimate_x, sd_x, estimate_y, sd_y, p_value, p_adj_bonf, p_adj_fdr )
+vl_table_ttest <- vl_table_ttest %>% arrange( p_adj_fdr, desc(estimate_x) )
+vl_table_ttest$p_value <- signif(vl_table_ttest$p_value, digits = 2)
+vl_table_ttest$p_adj_fdr <- signif(vl_table_ttest$p_adj_fdr, digits = 2)
+vl_table_ttest$p_adj_bonf <- signif(vl_table_ttest$p_adj_bonf, digits = 2)
+options(scipen=999)
+write.csv( vl_table_ttest, file=glue("{RESULTS_PATH}/tables/tableS6.csv"), quote=F, row.names = F )

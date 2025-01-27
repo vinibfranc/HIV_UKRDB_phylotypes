@@ -5,10 +5,12 @@
 
 NEW_HIV_UKRDB_phylotypes.Rproj
 data/
+!data/external/
 rds/
 results/
 scripts/bkp/
 old/
+sierra*
 
 # History files
 .Rhistory

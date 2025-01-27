@@ -2,19 +2,16 @@ libs_load <- c("glue","ape", "rlist", "ggtree", "data.table")
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
 treestruct_min_cl_size_res_yes_sup <- readRDS("rds/treestruct_min_cl_size_res_yes_sup.rds")
-#ml_trees <- readRDS("rds/ml_trees.rds")
 
 min_cl_size_choices <- c(30, 50, 100)
 tree_names <- c("A_A1","CRF_02_AG","C","B")
 
-# TODO below: current `treestruct_min_cl_size_res_yes_sup` has no phylotype 6 as seen below, see what to do depending on new results
-
-# treestruct_min_cl_size_res_yes_sup <- readRDS("rds/OLD_treestruct_min_cl_size_res_yes_sup.rds")
-# # IMPORTANT: After doing SPVL and CD4 analysis later in the workflow, the paraphyletic PT.B.5 (n=333, mcs=30) was found significantly different (VOI). 
-# # We decided to join it with its descendants (matching exactly with PT.B.6, n=31) making it monophyletic
-# # Merging clusters/PTs 5 and 6 from subtype B (mcs=30, index=[[1,4]]) to subsequent analyses (so new cluster is PT.B.5)
+treestruct_min_cl_size_res_yes_sup <- readRDS("rds/OLD_treestruct_min_cl_size_res_yes_sup.rds")
+# IMPORTANT: After doing VL and CD4 analysis later in the workflow, the paraphyletic PT.B.5 (n=333, mcs=30) was found significantly different (VOI).
+# We decided to join it with its descendants (matching exactly with PT.B.6, n=31) making it monophyletic
+# Merging clusters/PTs 5 and 6 from subtype B (mcs=30, index=[[1,4]]) to subsequent analyses (so new cluster is PT.B.5.UK)
 # treestruct_min_cl_size_res_yes_sup[[1,4]][[2]]$cluster[ treestruct_min_cl_size_res_yes_sup[[1,4]][[2]]$cluster == 6 ] <- 5
-# # PT6 will be empty now
+# PT6 will be empty now
 
 # Flag paraphyletic phylotypes
 treestruct_check_paraphyly <- treestruct_check_paraphyly_pt <- treestruct_check_paraphyly_pt2 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(timetrees))
@@ -99,6 +96,7 @@ fasta_files <- c(glue("{seqs_folder_naive}/A_A1_curated_refB_aln_len_filter.fast
 treestruct_min_cl_size_res_yes_sup <- readRDS("rds/treestruct_min_cl_size_res_yes_sup.rds")
 extracted_clusters <- readRDS("rds/extracted_clusters.rds")
 
+# compute backbone phylotype
 rm_paraphyletic_pt_alns <- backbone_cl_control <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(timetrees))
 for(x in 1:length(min_cl_size_choices)) {
 	aux_ntips_para <- c()
@@ -134,7 +132,7 @@ getDescendants<-function(tre,node,curr=NULL){
 	return(curr)
 }
 
-# merge paraphyletic clades with their descendants to make them monophyletic (for genomic analyses)
+# resolved paraphyletic phylotypes by tracing the most recent common ancestor (MRCA) of all sequences in the phylotype until a monophyletic group was formed
 merge_paraphyletic_desc <- function(tre, extr_clust_para) {
 	print(glue("ntips BEFORE: {length(extr_clust_para)}"))
 	mrcaa <- ape::getMRCA(phy=tre, tip=extr_clust_para)
@@ -146,18 +144,20 @@ merge_paraphyletic_desc <- function(tre, extr_clust_para) {
 	tree_adj
 }
 
-# TODO this is only outputting trees for the paraphyletic ones, if really want to incorporate paraphyletic needs to edit dfs, etc
-# I think it only matters to include them if sifnificant in VL or CD4 analyses, because otherwise would lead to overlapping PTs
-merge_para <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
+merge_para <- merge_para_timetr <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
 for(i in 1:length(min_cl_size_choices)) {
 	for(j in 1:length(tree_names)) {
-		for(k in as.integer( rm_paraphyletic_pt_alns[[i,j]]) ) {
+		#for(k in as.integer( rm_paraphyletic_pt_alns[[i,j]]) ) {
+		for(k in 1:length(extracted_clusters[[i,j]][[1]])) { 
 			if(!(k %in% as.integer(backbone_cl_control[[i,j]])) ) {
 				print(glue("{min_cl_size_choices[i]}-{tree_names[j]}-PT{k}"))
-				merge_para[[i,j]][[k]] <- merge_paraphyletic_desc(ml_trees[[j]], extracted_clusters[[i,j]][[1]][[k]]$tip.label)
+				#merge_para[[i,j]][[k]] <- merge_paraphyletic_desc(ml_trees[[j]], extracted_clusters[[i,j]][[1]][[k]]$tip.label)
+				merge_para_timetr[[i,j]][[k]] <- merge_paraphyletic_desc(timetrees[[j]], extracted_clusters[[i,j]][[1]][[k]]$tip.label)
 			}
+		#}
 		}
 	}
 }
 
-saveRDS(merge_para, "rds/merge_para.rds")
+#saveRDS(merge_para, "rds/merge_para.rds")
+saveRDS(merge_para_timetr, "rds/merge_para_timetr.rds")

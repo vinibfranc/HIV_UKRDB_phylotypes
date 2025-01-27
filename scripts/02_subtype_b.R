@@ -1,5 +1,3 @@
-# NOTE: after running timetrees and removing outliers for each individual subsample from folder `b_c_subsamples`, run here
-
 libs_load <- c("dplyr","openxlsx", "glue","ape","treedater","lubridate","data.table","ggtree","ggpubr","ggplot2","viridis","grid")
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
@@ -33,8 +31,6 @@ write.FASTA(fasta_b_outl_rm, glue("{seqs_folder_naive}/B_UK_final_aln_outliers_r
 
 # Estimate full tree using iqtree2
 
-##### NOTE: here will need to move B_UK_final_aln_outliers_removed.fasta to kingman and run (probably try -bcor=0.90, 0.95, 0.97)
-
 system(glue("{iqtree_bin} -s {seqs_folder_naive}/B_UK_final_aln_outliers_removed.fasta -m GTR+R -nt AUTO -ntmax 5 -B 1000 -nm 5000 -bcor 0.97"))
 system(glue("mv {seqs_folder_naive}/*.bionj {seqs_folder_naive}/*.gz {seqs_folder_naive}/*.iqtree {seqs_folder_naive}/*.log {seqs_folder_naive}/*.mldist {seqs_folder_naive}/*.treefile {output_iqtree_folder}"))
 
@@ -62,7 +58,7 @@ tree_b_adj <- ape::root(tree_b_adj, outgroup=glue("{root_tip_c}"), resolve.root=
 saveRDS(tree_b_adj, "rds/tree_b_adj.rds")
 saveRDS(subtype_b_sampleTimes, "rds/subtype_b_sampleTimes.rds")
 
-##### NOTE: here will need to move subtype_b_sampleTimes.rds, raw_clock_rates.rds, R file, pbs file, s=995 (had to use ape dev version because of issue with dist.nodes [tree too big], which is enhanced for larger trees in dev version)
+##### NOTE: had to use ape dev version because of issue with dist.nodes [tree too big], which is enhanced for larger trees in dev version
 raw_clock_b <- readRDS("rds/raw_clock_b.rds")
 # Unable to converge with additive model
 #timetree_b <- dater( tree_b_adj, subtype_b_sampleTimes, s=n_sites_aln, clock='additive', omega0=unlist(raw_clock_b), ncpu=NCPU) #median(unlist(raw_clock_rates))

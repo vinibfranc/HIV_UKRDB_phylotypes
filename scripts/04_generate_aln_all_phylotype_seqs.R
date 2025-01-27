@@ -23,7 +23,7 @@ for(i in 1:length(min_cl_size_choices)) {
 		for(k in 1:length(extracted_clusters[[i,j]][[1]])) {
 			if(!(k %in% as.integer(backbone_cl_control[[i,j]])) ) {
 				if( k %in%  as.integer( rm_paraphyletic_pt_alns[[i,j]]) ) {
-					fs <- fastas_subtypes[[i,j]][( rownames(fastas_subtypes[[i,j]]) %in% merge_para[[i,j]][[k]]$tip.label), ]
+					fs <- fastas_subtypes[[i,j]][( rownames(fastas_subtypes[[i,j]]) %in% merge_para_timetr[[i,j]][[k]]$tip.label), ]
 				} else {
 					fs <- fastas_subtypes[[i,j]][( rownames(fastas_subtypes[[i,j]]) %in% extracted_clusters[[i,j]][[1]][[k]]$tip.label), ]
 				}

@@ -1,5 +1,3 @@
-# NOTE: after running timetrees and removing outliers for each individual subsample from folder `b_c_subsamples`, run here
-
 libs_load <- c("dplyr","openxlsx", "glue","ape","treedater","lubridate","data.table","ggtree","ggpubr","ggplot2","viridis")
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
@@ -31,8 +29,6 @@ rownames(fasta_c) <- paste0("t.",rownames(fasta_c))
 fasta_c_outl_rm <- fasta_c[rownames(fasta_c) %in% all_tips_filtered_c,]
 write.FASTA(fasta_c_outl_rm, glue("{seqs_folder_naive}/C_UK_final_aln_outliers_removed.fasta"))
 
-##### NOTE: here will need to move C_UK_final_aln_outliers_removed.fasta and pbs file and run (probably try -bcor=0.80, 0.85, 0.90)
-
 system(glue("{iqtree_bin} -s {seqs_folder_naive}/C_UK_final_aln_outliers_removed.fasta -m GTR+R -nt AUTO -ntmax 5 -B 1000 -nm 5000 -bcor 0.90"))
 system(glue("mv {seqs_folder_naive}/*.bionj {seqs_folder_naive}/*.gz {seqs_folder_naive}/*.iqtree {seqs_folder_naive}/*.log {seqs_folder_naive}/*.mldist {seqs_folder_naive}/*.treefile {output_iqtree_folder}"))
 
@@ -58,7 +54,6 @@ tree_c_adj <- ape::root(tree_c_adj, outgroup=glue("{root_tip_b}"), resolve.root=
 saveRDS(tree_c_adj, "rds/tree_c_adj.rds")
 saveRDS(subtype_c_sampleTimes, "rds/subtype_c_sampleTimes.rds")
 
-##### NOTE: here will need to move C_UK_final_aln_outliers_removed.fasta.treefile, subtype_c_sampleTimes.rds, raw_clock_rates_c.rds, R file, pbs file, s=995, ncpu=7 to remove PC (kingman)
 raw_clock_c <- readRDS("rds/raw_clock_c.rds")
 
 timetree_c <- dater( tree_c_adj, subtype_c_sampleTimes, s=995, clock='additive', omega0=unlist(raw_clock_c), ncpu=4 ) #omega0=median(unlist(raw_clock_rates_c))

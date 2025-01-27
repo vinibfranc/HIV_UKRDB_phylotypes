@@ -1,4 +1,4 @@
-libs_load <- c("ggplot2","dplyr","ggpubr","data.table","glue","lme4","lubridate","sjPlot","viridis", "boot")
+libs_load <- c("ggplot2","dplyr","ggpubr","data.table","glue","lme4","lubridate","sjPlot","viridis", "boot", "parallel")
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
 RDS_PATH="rds"
@@ -52,50 +52,37 @@ hist(cd4_subtypes_comb2[[1,4]]$years_since_1cd4, breaks=50)
 
 backbone_cl_control <- readRDS(glue("{RDS_PATH}/backbone_cl_control.rds"))
 
-# CD4 model for cd4 decline
-# cd4 ~ years_since_1cd4 + age_group + years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
-# 	(years_since_1cd4 | patientindex)  + (years_since_1cd4 | phylotype),
-fit_cd4_model <- function(outcome, cd4_df, mcs_subtype_choice_cd4_transf, do_boot) {
-	# distribution for the slope and intercept random effects as a two-dimensional joint normal, 
-	# rather than two independent one-dimensional normals (did not change crude estims of variance explained)
+NREP <- 1000
+NCPU <- 6
+
+#### IMPORTANT: changing to test if random effect estimates indeed include combination of fixed and random effects
+fit_cd4_model <- function(outcome, fostr, cd4_df, mcs_subtype_choice_cd4_transf, do_boot) {
 	
-	# previously: (years_since_1cd4 | patientindex) + (years_since_1cd4 | phylotype)
-	
-	formula <- as.formula(paste(outcome, "~ years_since_1cd4 + age_group + 
-    years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
-    (1 + years_since_1cd4 | patientindex) + (1 + years_since_1cd4 | phylotype)")) #(years_since_1cd4 | patientindex) + (years_since_1cd4 | phylotype)
+	formula <- as.formula(paste(outcome, fostr)) 
+	#print(formula)
 	fit <- lmer(formula, data=cd4_df, REML=FALSE, control = lmerControl(optimizer = "bobyqa")) # adding optim removed 'fail to converge' warning
-	#print(summary( fit ))
 	
 	# extract random effects of phylotype
 	randeff_pt <- ranef( fit )$phylotype
 	colnames(randeff_pt) <- c("intercept_randeff", "years_since_1cd4_randeff")
 	randeff_pt$phylotype <- rownames(randeff_pt)
-	#View(randeff_pt)
 	# extract combined fixed effects and random effects for phylotype
 	comb_rand_fixed_pt1 <- coef( fit )$phylotype
 	comb_rand_fixed_pt <- comb_rand_fixed_pt1 %>% dplyr::select("(Intercept)", "years_since_1cd4")
-	# TODO bring back fixed effects later
-	colnames(comb_rand_fixed_pt) <- c("intercept_fixedeff", "slope_phylotype")
+	
+	colnames(comb_rand_fixed_pt) <- c("intercept_fixedeff", "slope_phylotype") #slope_phylotype is actually years_since_1cd4 (slope in ref group)
 	comb_rand_fixed_pt$phylotype <- rownames(comb_rand_fixed_pt)
 	combined_coeffs <- inner_join(randeff_pt, comb_rand_fixed_pt, by="phylotype")
-	#View(combined_coeffs)
-	#View(summary(fit)$coefficients[,1])
 	
 	if(do_boot) {
 		# function to bootstrapping random effects
-		.random_effect_se <- function(data, indices) {
+		.random_effect_se <- function(data,fo, indices) {
 			data <- data %>% dplyr::select(patientindex, phylotype, cd4, sqrt_cd4, years_since_1cd4, age_group, sexid, exposureid)
 			boot_data <- data[indices, ]
-			#print(boot_data)
-			formula <- as.formula("cd4 ~ years_since_1cd4 + age_group + 
-	    years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
-	    (1 + years_since_1cd4 | patientindex) + (1 + years_since_1cd4 | phylotype)")
-			#boot_fit <- lmer(formula, data=boot_data, REML=FALSE, control = lmerControl(optimizer = "bobyqa"))
 			
 			# Fit model and handle failures
 			boot_fit <- tryCatch(
-				lmer(formula, data = boot_data, REML = FALSE, control = lmerControl(optimizer = "bobyqa")),
+				lmer(fo, data = boot_data, REML = FALSE, control = lmerControl(optimizer = "bobyqa")),
 				error = function(e) return(rep(NA, length(unique(data$phylotype))))  # Return consistent NA vector if model fails
 			)
 			
@@ -103,8 +90,7 @@ fit_cd4_model <- function(outcome, cd4_df, mcs_subtype_choice_cd4_transf, do_boo
 			if (is.numeric(boot_fit)) {
 				return(boot_fit)  # Return NA vector if model fitting failed
 			}
-			
-			ranef_vals <- coef(boot_fit)$phylotype %>% dplyr::select(years_since_1cd4)
+			ranef_vals <- ranef(boot_fit)$phylotype %>% dplyr::select(years_since_1cd4)
 			
 			# Ensure all phylotype levels are present
 			all_phylotypes <- unique(data$phylotype)
@@ -122,25 +108,21 @@ fit_cd4_model <- function(outcome, cd4_df, mcs_subtype_choice_cd4_transf, do_boo
 		}
 		# call bootstrapping
 		
-		NREP <- 100
-		NCPU <- 4
-		
 		print("Running boot")
-		boot_res <- boot::boot(data=cd4_df, statistic=.random_effect_se, R = NREP, ncpus=NCPU)
+		boot_res <- boot::boot(data=cd4_df, fo = formula, statistic=.random_effect_se, R = NREP, parallel = "multicore", ncpus=NCPU)
 		print(boot_res)
 		# Calculate standard errors for random effects
 		random_effect_ses <- apply(boot_res$t, 2, sd)
 		
 		# Calculate t-values for random effects
-		comb_rand_fixed_pt2 <- comb_rand_fixed_pt1 %>% dplyr::select(years_since_1cd4)
+		comb_rand_fixed_pt2 <- randeff_pt %>% dplyr::select(years_since_1cd4_randeff)
 		colnames(comb_rand_fixed_pt2) <- c("phylotype_coef")
-		comb_rand_fixed_pt2$phylotype <- rownames(comb_rand_fixed_pt1)
+		comb_rand_fixed_pt2$phylotype <- rownames(comb_rand_fixed_pt2)
 		comb_rand_fixed_pt2 <- comb_rand_fixed_pt2 %>% dplyr::select(phylotype, phylotype_coef)
+		
 		comb_rand_fixed_pt2$t_value <- comb_rand_fixed_pt2[, "phylotype_coef"] / random_effect_ses
 		comb_rand_fixed_pt2$se <- random_effect_ses
 		comb_rand_fixed_pt2$p_value <- 2 * (1 - pnorm(abs(comb_rand_fixed_pt2$t_value)))
-		View(comb_rand_fixed_pt2)
-		#comb_rand_fixed_pt2 <- comb_rand_fixed_pt2 %>% mutate(significance = if_else(p_value < 0.05, "*", ""))
 		comb_rand_fixed_pt2 <- comb_rand_fixed_pt2[order(comb_rand_fixed_pt2$phylotype_coef), ]
 		
 		# Plot estimates with confidence intervals
@@ -157,68 +139,125 @@ fit_cd4_model <- function(outcome, cd4_df, mcs_subtype_choice_cd4_transf, do_boo
 	}
 }
 
-lmm1 <- lmm_sqrt1 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names)) 
+# IMPORTANT: lme4 includes random intercept by default (no need to add e.g. "(1 + years_since_1cd4 | patientindex)", just "(years_since_1cd4 | patientindex)" is fine)
+# Default behaviour is also to assume joint-normal distribution for intercept and slope and that they are correlated
+cd4_model_form <- paste(" ~ years_since_1cd4 + age_group +  years_since_1cd4 * sexid + years_since_1cd4:exposureid + (years_since_1cd4 | patientindex) + (years_since_1cd4 | phylotype)")
+
+lmm1 <- lmm_sqrt1 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
 for(i in 1:length(min_cl_size_choices)) {
 	for(j in 1:length(tree_names)) {
 			if(nrow(cd4_subtypes_comb2[[i,j]]) > 0) {
 				print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
 				# define as ref category for fixed effects: backbone phylotype, age 30-39, sexid Male, exposureid Homo-bisexual
-				# untransformed cd4 model
+				# untransformed cd4 model: without bootstrap (raw first estim)
 				cd4_subtypes_comb2[[i,j]] <- cd4_subtypes_comb2[[i,j]] %>% mutate(phylotype = relevel(phylotype, ref=backbone_cl_control[[i,j]]), age_group = relevel(age_group, ref="30-39"), sexid = relevel(sexid, ref="Male"), exposureid = relevel(exposureid, ref="Homo/bisexual") )
-				lmm1[[i,j]] <- fit_cd4_model("cd4", cd4_subtypes_comb2[[i,j]], glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4"), do_boot=F)
-				# sqrt model
-				lmm_sqrt1[[i,j]] <- fit_cd4_model("sqrt_cd4", cd4_subtypes_comb2[[i,j]], glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4"), do_boot=F)
+				lmm1[[i,j]] <- fit_cd4_model("cd4", cd4_model_form, cd4_subtypes_comb2[[i,j]], glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4"), do_boot=F)
+				# sqrt model: without bootstrap (raw first estim)
+				lmm_sqrt1[[i,j]] <- fit_cd4_model("sqrt_cd4", cd4_model_form, cd4_subtypes_comb2[[i,j]], glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4"), do_boot=F)
 			} else {
 				next
 			}
 		}
 }
+saveRDS(lmm1, glue("{RDS_PATH}/lmm1.rds"))
+saveRDS(lmm_sqrt1, glue("{RDS_PATH}/lmm_sqrt1.rds"))
 
-saveRDS(cd4_subtypes_comb2, glue("{RDS_PATH}/cd4_subtypes_comb2.rds"))
+# inspect B30 models closer (indices 1,4 of matrix)
+imcs <- 1 
+jtree <- 4 
+da <- cd4_subtypes_comb2[[imcs,jtree]]
+da <- da %>% mutate(phylotype = relevel(phylotype, ref=backbone_cl_control[[imcs,jtree]]), age_group = relevel(age_group, ref="30-39"), sexid = relevel(sexid, ref="Male"), exposureid = relevel(exposureid, ref="Homo/bisexual") )
+'
+- Is intercept correlated with slope?? 
+	* yes, but cor is reversed and much smaller with fixed eff...
+- Recreate distribution of fixed effect slopes and rand eff slopes; compare variance 
+	* FE has large outliers 
+- Is fixed effect slopes centered zero & approx normal? 
+	* centered, but large outliers
+- excl backbone & repeat 
+'
 
-# ranef() Returns only the random effects for phylotype (deviations from the fixed effects)
-# coef() Combines the fixed effects with the random effects for phylotype. Provides the actual coefficients for each phylotype, including the specific intercept and slope for years_since_1cd4.
-# For the random effect (years_since_1cd4 | phylotype), no specific reference group is needed because the random effects capture deviations for each phylotype from the overall population-level effects
-# For fixed effect specified backbone, people in thirties, and male as reference
-# Random Effects Covariance Matrix: 
-# PATIENTINDEX -> variance: 45678.98, sd: 213.726 -> variation in intercepts across patients high
-# slope variance: ~900, sd: ~30 also high, the rate of change in CD4 levels varies by 30 units per year across patients
-# correlation random intercept vs slope: -0.54; patients with higher intercepts tend to have slower declines in CD4 levels over time
+# random effect of phylotype (as two-dimensional joint normal)
+form1 <- as.formula(paste("cd4 ~ years_since_1cd4 + age_group + 
+    years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
+    (1 + years_since_1cd4 | patientindex) + (1 + years_since_1cd4 | phylotype)")) 
+f1 <- lmer(form1, data=da, REML=FALSE, control = lmerControl(optimizer = "bobyqa")) 
+f1reff <-  coef(f1)$phylotype 
+f1slope  <- f1reff$years_since_1cd4 
+plot( f1reff[,1], f1reff$years_since_1cd4 )
+cor( cbind(f1reff[,1], f1reff$years_since_1cd4 ))
 
-# PHYLOTYPE -> variance 592.41, sd 24.340 -> variation in intercepts lower than the one of paatientindex
-# slope: variance 54.24, sd ~7.4 -> variation in slopes much smaller
-# correlation: +0.49: higher intercepts within PT associated with faster decline in CD4 levels
+f1reff2 <- ranef(f1)$phylotype 
+f1slope2  <- f1reff2$years_since_1cd4
+plot( f1reff2[,1], f1reff2$years_since_1cd4 )
 
-# residual: variance and sd (21k and 145): still substantial variance not explained by fixed and random effects
-# IMPORTANT: demonstrates heritability in a crude way
+# fixed effect of phylotype 
+form2 <- as.formula(paste("cd4 ~ years_since_1cd4*phylotype + age_group + 
+    years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
+    (1 + years_since_1cd4 | patientindex) ")) 
+f2 <- lmer(form2, data=da, REML=FALSE, control = lmerControl(optimizer = "bobyqa")) 
+f2coef <- summary(f2)$coefficients 
+f2intercept <- f2coef[ grepl(rownames(f2coef), patt='^phylotype') , 1]
+f2slope <- f2coef[ grepl(rownames(f2coef), patt=':phylotype') , 1]
+plot( f2intercept, f2slope )
+cor( f2intercept, f2slope )
+summary( lm( f2intercept ~ f2slope ) )
+# [1] -0.3532388
+plot( f1slope[-1], f2slope )
+plot( f1slope[-1], f2slope, ylim=c(-50,10) )
+cor( f1slope[-1],  f2slope )
+# [1] 0.249739
 
-# Three "simple/crude" measures of the fraction of variance explained by the lmm.
-# https://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#how-do-i-compute-a-coefficient-of-determination-r2-or-an-analogue-for-glmms
-r2.corr.mer <- function(m) {
-	print("corr 1: ")
-	lmfit <-  lm(model.response(model.frame(m)) ~ fitted(m))
-	print(summary(lmfit)$r.squared)
-	print("corr 2")
-	print( 1 - var(residuals(m)) / var(model.response(model.frame(m))) )
-	print("corr 3")
-	print( cor(model.response(model.frame(m)), predict(m, type = "response"))^2 )
-}
+# gives same result as f1 (random eff not as two-dim joint normal), so using this simpler version
+form3 <- as.formula(paste("cd4 ~ years_since_1cd4 + age_group + 
+    years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
+    (years_since_1cd4 | patientindex) + (years_since_1cd4 | phylotype)")) 
+f3 <- lmer(form3, data=da, REML=FALSE, control = lmerControl(optimizer = "bobyqa")) 
+f3reff <-  coef(f3)$phylotype 
+f3slope  <- f3reff$years_since_1cd4 
+f3intercept <- f3reff[,1] 
+plot( f3intercept, f3slope )
 
-r2_corrs <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names)) 
-for(i in 1:length(min_cl_size_choices)) {
-	for(j in 1:length(tree_names)) {
-		print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
-		print("untrans CD4")
-		r2.corr.mer(lmm1[[i,j]]$fit)
-		print("sqrt CD4")
-		r2.corr.mer(lmm_sqrt1[[i,j]]$fit)
-	}
-}
+# drop backbone 
+da$backbone <- da$phylotype == 153
+d1 <- da[!da$backbone,]
+form4 <- as.formula(paste("cd4 ~ years_since_1cd4 + age_group + 
+    years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
+    (years_since_1cd4 | patientindex) + (years_since_1cd4 | phylotype)")) 
+f4 <- lmer(form4, data=d1, REML=FALSE, control = lmerControl(optimizer = "bobyqa")) 
+f4reff <-  coef(f4)$phylotype 
+f4slope  <- f4reff$years_since_1cd4 
+f4intercept <- f4reff[,1] 
+plot( f4intercept, f4slope )
+## very tight cor! 
+cor( f4intercept, f4slope )
+# [1] 0.9781044
 
-# for B30: # same when using random effects as indep normals or joint normals: cd4 ~0.78
-# sqrt cd4: ~0.87
+# fixed eff backbone, doesn't work 
+form5 <- as.formula(paste("cd4 ~ years_since_1cd4 + age_group + 
+    years_since_1cd4 * sexid + years_since_1cd4:exposureid + 
+    	years_since_1cd4:backbone + 
+    (years_since_1cd4 | patientindex) + (years_since_1cd4 | phylotype)")) 
+f5 <- lmer(form5, data=da, REML=FALSE, control = lmerControl(optimizer = "bobyqa")) # singular fit...
+summary( f5)
+f5reff <-  coef(f5)$phylotype 
+head(f5reff) 
+f5slope  <- f5reff$years_since_1cd4 
+f5intercept <- f5reff[,1] 
+plot( f5intercept, f5slope )
 
-# Visualise and remove outlying individuals in a distribution of maximum-likehood slopes and intercepts + outlying measurements
+AIC(f1)
+# [1] 424831.4
+AIC(f2)
+# [1] 425018.8
+AIC(f3)
+# [1] 424831.4
+AIC(f4)
+# [1] 169701.5; not incl backbone 
+AIC(f5)
+# [1] 424829.3
+
+# Visualise and remove outlying individuals in a distribution of maximum-likehood slopes and intercepts + outlying measurements (thanks Chris Wymant for advice)
 vis_residuals <- function(fit, cd4_df, mcs_subtype_choice) {
 	# Extract random effects
 	random_effects <- ranef(fit)
@@ -270,10 +309,12 @@ vis_residuals <- function(fit, cd4_df, mcs_subtype_choice) {
 	print(nrow(outl_meas))
 	
 	# remove outlier individuals and measurements to later fit model without them
-	cd4_df_filt <- cd4_df[!cd4_df$patientindex %in% outl_indivs,]
+	print("nrow BEFORE removing individuals: ")
+	print(nrow(cd4_df))
+	cd4_df_filt <- cd4_df[!cd4_df$patientindex %in% outl_indivs$patientindex,]
 	print("nrow after removing individuals: ")
 	print(nrow(cd4_df_filt))
-	cd4_df_filt <- cd4_df[cd4_df$sqrt_cd4 <= 45,]
+	cd4_df_filt <- cd4_df_filt[cd4_df_filt$sqrt_cd4 <= 45,] # same as outl_meas
 	print("nrow after removing measurements: ")
 	print(nrow(cd4_df_filt))
 	cd4_df_filt <- cd4_df_filt[cd4_df_filt$patientindex %in% unique(cd4_df_filt$patientindex[duplicated(cd4_df_filt$patientindex)]),]
@@ -284,205 +325,198 @@ vis_residuals <- function(fit, cd4_df, mcs_subtype_choice) {
 }
 
 # Run removal of outlying individuals and measurements
-vl_subtypes_comb2 <- readRDS(glue("{RDS_PATH}/vl_subtypes_comb2.rds"))
+cd4_subtypes_comb2 <- readRDS(glue("{RDS_PATH}/cd4_subtypes_comb2.rds"))
 residuals_removal_mx <-  ij_outliers_pts <- ij_outliers_meas <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
 for(i in 1:length(min_cl_size_choices)) {
 	for(j in 1:length(tree_names)) {
 		print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
 		residuals_removal_mx[[i,j]] <- vis_residuals(lmm1[[i,j]]$fit, cd4_subtypes_comb2[[i,j]], glue("{min_cl_size_choices[i]}-{tree_names[j]}")) # 130 outlier indivs, 11 outlier measurements
-		# inner_join of outlier individuals with cluster membership to see if removing VL VOI patients
-		ij_outliers_pts[[i,j]] <- inner_join(vl_subtypes_comb2[[1,4]], residuals_removal_mx[[i,j]]$outl_indivs, by="patientindex")
-		print("Patients with outlying slopes or intercepts")
-		print(length(unique(ij_outliers_pts[[i,j]]$patientindex))) # 98 patients with outlying slopes or intercepts
+		# inner_join of outlier individuals with cluster membership to see if removing cd4 VOI patients
+		ij_outliers_pts[[i,j]] <- inner_join(cd4_subtypes_comb2[[i,j]], residuals_removal_mx[[i,j]]$outl_indivs, by="patientindex")
 		print("Distribution of outliers (slope and intercept) in phylotypes")
-		print( table(ij_outliers_pts[[i,j]]$cluster) ) # none of subtype B VL VOIs (PTs 20, 40, 69, and 101) have a patient removed
-		# same as above but for individual measurements
-		ij_outliers_meas[[i,j]] <- inner_join(vl_subtypes_comb2[[1,4]], residuals_removal_mx[[i,j]]$outl_meas, by="patientindex")
-		print("Patients with outlying measurements")
-		print(length(unique(ij_outliers_meas[[i,j]]$patientindex))) # 10 patients
-		print("Distribution of outliers (measurements) in phylotypes")
-		print( table(ij_outliers_meas[[i,j]]$cluster.x) ) # no outlier measurements from potential VL VOIs as well
+		print( table(ij_outliers_pts[[i,j]]$cluster) ) # none of subtype B cd4 VOIs (PTs 20, 40, 69, and 101) have a patient removed
 	}
 }
 
-#saveRDS(residuals_removal_mx, glue("{RDS_PATH}/residuals_removal_mx.rds"))
+saveRDS(residuals_removal_mx, glue("{RDS_PATH}/residuals_removal_mx.rds"))
+
+# run boostrap on random effs for both cd4 and sqrt_cd4 for all subtypes
 residuals_removal_mx <- readRDS(glue("{RDS_PATH}/residuals_removal_mx.rds"))
 
-# plot distribution of follow-up times and positive slopes (potentially leading to biased estimates) + filter original CD4 df to exclude short follow-ups & >90% quantile slopes
-plot_distr_cd4_follow_ups <- function(cd4_df, n_measurements_to_consider, mcs_subtype_choice) {
-	# calculate slopes
-	cd4_dt <- as.data.table(cd4_df)
-	cd4_dt_slopes <- cd4_dt[,list(phylotype=phylotype, intercept=coef(lm(cd4~cd4_decimal_date, na.action=na.exclude))[1], slope=coef(lm(cd4~cd4_decimal_date, na.action=na.exclude))[2]), by=patientindex]
-	#View(cd4_dt_slopes)
-	pl <- ggplot(cd4_dt_slopes, aes(slope)) + #follow_up_cat
-		geom_histogram()
-	ggsave(plot=pl, filename=glue("{RESULTS_PATH}/06_cd4_ml_model/{mcs_subtype_choice}_inspect_cd4_slopes.jpg"), width=10, height=8, dpi=300)
-	
-	print("max slope")
-	print(max(cd4_dt_slopes$slope))
-	print("min slope")
-	print(min(cd4_dt_slopes$slope))
-	print("median slope")
-	quantile_50_slopes <- quantile(cd4_dt_slopes$slope, probs = 0.5)
-	print(quantile_50_slopes) #-48
-	print("95% quantile slopess")
-	quantile_95_slopes <- quantile(cd4_dt_slopes$slope, probs = 0.95)
-	print(quantile_95_slopes) #348
-	quantile_90_slopes <- quantile(cd4_dt_slopes$slope, probs = 0.90)
-	print(quantile_90_slopes) #99
+NREP <- 1000
+NCPU <- 6
 
-	# follow-up time distributions
-	cd4_df_slopes <- as.data.frame(cd4_dt_slopes)
-	if(n_measurements_to_consider == "all") {
-		cd4_df_follup <- cd4_df %>% group_by(patientindex) %>% summarise(follow_up_time = years_since_1cd4[measurement_id==max(measurement_id)], phylotype=phylotype) %>% ungroup()
-	}
-	else if(n_measurements_to_consider == 2) {
-		cd4_df_follup <- cd4_df %>% group_by(patientindex) %>% filter(max(measurement_id) <= 2) %>% summarise(follow_up_time = years_since_1cd4[measurement_id==max(measurement_id)], phylotype=phylotype) %>% ungroup()
-	}
-	
-	# custom categories for follow-up time
-	cd4_df_follup <- cd4_df_follup %>% mutate(
-		follow_up_cat = dplyr::case_when(follow_up_time>0 & follow_up_time <= 0.085 ~ "[0-1 month]", follow_up_time>0.085 & follow_up_time<=0.252 ~ "(1-3 months]",
-																																			follow_up_time>0.252 & follow_up_time<=0.504 ~ "(3-6 months]", follow_up_time>0.504 & follow_up_time<=1.002 ~ "(6 months - 1 year]",
-																																			follow_up_time>1.002 & follow_up_time<=3.002 ~ "(1-3 years]", follow_up_time>3.002 & follow_up_time<=5.002 ~ "(3-5 years]",
-																																			follow_up_time>5.002 & follow_up_time<=10.002 ~ "(5-10 years]", follow_up_time>10.002 ~ ">10 years"),
-		follow_up_cat = factor(follow_up_cat,level = c("[0-1 month]","(1-3 months]","(3-6 months]","(6 months - 1 year]","(1-3 years]","(3-5 years]","(5-10 years]",">10 years")))
-	
-	# summarise follow-ups for all data
-	cd4_df_follup_summ <- cd4_df_follup %>% group_by(follow_up_cat) %>% summarise(n=n())
-	print(cd4_df_follup_summ)
-	pl3 <- ggplot(cd4_df_follup_summ, aes(x = follow_up_cat, y = n)) + #follow_up_cat
-		geom_bar(stat = "identity", fill = "skyblue", color = "black") + theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1))
-	ggsave(plot=pl3, filename=glue("{RESULTS_PATH}/06_cd4_ml_model/{mcs_subtype_choice}_inspect_cd4_follow_ups_overall_{n_measurements_to_consider}_meas.jpg"), width=10, height=8, dpi=300)
-
-	# summarise for each phylotype
-	cd4_df_follup_summ_pt <- cd4_df_follup %>% group_by(follow_up_cat, phylotype) %>% summarise(n=n())
-	pl4 <- ggplot(cd4_df_follup_summ_pt, aes(x = follow_up_cat, y = n)) +
-		geom_bar(stat = "identity", fill = "skyblue", color = "black") +
-		facet_wrap(~phylotype, scales = "free") + theme(axis.text.x = element_text(angle = 35, hjust = 1, size=4))
-	ggsave(plot=pl4, filename=glue("{RESULTS_PATH}/06_cd4_ml_model/{mcs_subtype_choice}_inspect_cd4_follow_ups_phylotypes_{n_measurements_to_consider}_meas.jpg"), width=20, height=15, dpi=300)
-
-	# summarise follow-ups for slopes >90% quantile (e.g. for B30 = 99) across phylotypes
-	cd4_df_follup_slopes <- inner_join(cd4_df_follup, cd4_df_slopes, by="patientindex")
-	cd4_df_follup_slopes_higher <- cd4_df_follup_slopes[cd4_df_follup_slopes$slope >= as.numeric(unname(quantile_90_slopes)),]
-	#View(cd4_df_follup_slopes_higher)
-	cd4_df_follup_slope_pt <- cd4_df_follup_slopes_higher %>% group_by(follow_up_cat, phylotype.x) %>% summarise(n=n())
-	pl5 <- ggplot(cd4_df_follup_slope_pt, aes(x = follow_up_cat, y = n)) +
-		geom_bar(stat = "identity", fill = "skyblue", color = "black") +
-		facet_wrap(~phylotype.x, scales = "free") + theme(axis.text.x = element_text(angle = 35, hjust = 1, size=4))
-	ggsave(plot=pl5, filename=glue("{RESULTS_PATH}/06_cd4_ml_model/{mcs_subtype_choice}_inspect_cd4_follow_ups_phylotypes_higher_slopes_{n_measurements_to_consider}_meas.jpg"), width=20, height=15, dpi=300)
-	
-	# List of patients to remove: 1) only 2 measurements, (2) one only one month apart from the other, (3) and in >90% quantile of slopes (high positive value) - this last one regardless of n meas or time of follow-up
-	
-	if(n_measurements_to_consider == 2) {
-		cd4_df_follup_short <- unique( cd4_df_follup[cd4_df_follup$follow_up_cat == "[0-1 month]",]$patientindex )
-		print("patients removed 1")
-		print(length(cd4_df_follup_short))
-		
-		cd4_df_slopes <- as.data.frame(cd4_dt_slopes)
-		cd4_df_unlik_high_slopes <- unique( cd4_df_slopes[cd4_df_slopes$slope >= as.numeric(unname(quantile_90_slopes)),]$patientindex )
-		print("patients removed 2")
-		print(length(cd4_df_unlik_high_slopes))
-		
-		print("patients removed both")
-		union_rm <- union(cd4_df_follup_short, cd4_df_unlik_high_slopes)
-		print(length(union_rm))
-		
-		cd4_df_filt1 <- cd4_df[!(cd4_df$patientindex %in% cd4_df_follup_short),]
-		cd4_df_filt2 <- cd4_df[!(cd4_df$patientindex %in% union_rm),]
-		return(list(cd4_df_filt1=cd4_df_filt1, cd4_df_filt2=cd4_df_filt2))
-	}
-	
-}
-
-cd4_meas_filt_short_fups <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
+lmm2 <- lmm_sqrt2 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
 for(i in 1:length(min_cl_size_choices)) {
 	for(j in 1:length(tree_names)) {
-		# all CD4 measurements
-		plot_distr_cd4_follow_ups(residuals_removal_mx[[i,j]]$cd4_df_filt, n_measurements_to_consider = "all", glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
-		# Only patients that have 2 measurements
-		cd4_meas_filt_short_fups[[i,j]] <- plot_distr_cd4_follow_ups(residuals_removal_mx[[i,j]]$cd4_df_filt, n_measurements_to_consider = 2, glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
-	}
-}
-
-saveRDS(cd4_meas_filt_short_fups, glue("{RDS_PATH}/cd4_meas_filt_short_fups.rds"))
-
-# check model again after removing outlying indivs and measurements
-# IMPORTANT: not doing boot for A1, CRF, and C because of singularFits error
-#lmm2 <- lmm_sqrt2 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
-#lmm3 <- lmm_sqrt3 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
-lmm4 <- lmm_sqrt4 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
-for(i in 1:length(min_cl_size_choices)) {
-	for(j in 1:length(tree_names)) {
-		print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
-		if(j <= 3) {
-			print("model CD4")
-			#lmm2[[i,j]] <- fit_cd4_model("cd4", residuals_removal_mx[[i,j]]$cd4_df_filt, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4"), do_boot=FALSE)
-			#lmm3[[i,j]] <- fit_cd4_model("cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt1, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4-filt_short"), do_boot=FALSE)
-			lmm4[[i,j]] <- fit_cd4_model("cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt2, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4-filt_short_high_slopes"), do_boot=FALSE)
-			print("model sqrt CD4")
-			#lmm_sqrt2[[i,j]] <- fit_cd4_model("sqrt_cd4", residuals_removal_mx[[i,j]]$cd4_df_filt, glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4"), do_boot=FALSE)
-			#lmm_sqrt3[[i,j]] <- fit_cd4_model("sqrt_cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt1, glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4-filt_short"), do_boot=FALSE)
-			lmm_sqrt4[[i,j]] <- fit_cd4_model("sqrt_cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt2, glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4-filt_short_high_slopes"), do_boot=FALSE)
+		if(nrow(cd4_subtypes_comb2[[i,j]]) > 0) {
+			print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
+			# define as ref category for fixed effects: backbone phylotype, age 30-39, sexid Male, exposureid Homo-bisexual
+			# untransformed cd4 model: without bootstrap (raw first estim)
+			db <- residuals_removal_mx[[i,j]]$cd4_df_filt
+			db <- db %>% mutate(phylotype = relevel(phylotype, ref=backbone_cl_control[[i,j]]), age_group = relevel(age_group, ref="30-39"), sexid = relevel(sexid, ref="Male"), exposureid = relevel(exposureid, ref="Homo/bisexual") )
+			lmm2[[i,j]] <- fit_cd4_model("cd4", cd4_model_form, db, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4"), do_boot=TRUE)
+			gc()
+			# sqrt model: without bootstrap (raw first estim)
+			lmm_sqrt2[[i,j]] <- fit_cd4_model("sqrt_cd4", cd4_model_form, db, glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4"), do_boot=TRUE)
+			gc()
 		} else {
-			print("model CD4")
-			#lmm2[[i,j]] <- fit_cd4_model("cd4", residuals_removal_mx[[i,j]]$cd4_df_filt, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4"), do_boot=TRUE)
-			#lmm3[[i,j]] <- fit_cd4_model("cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt1, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4-filt_short"), do_boot=FALSE)
-			lmm4[[i,j]] <- fit_cd4_model("cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt2, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4-filt_short_high_slopes"), do_boot=FALSE)
-			print("model sqrt CD4")
-			#lmm_sqrt2[[i,j]] <- fit_cd4_model("sqrt_cd4", residuals_removal_mx[[i,j]]$cd4_df_filt, glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4"), do_boot=TRUE)
-			#lmm_sqrt3[[i,j]] <- fit_cd4_model("sqrt_cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt1, glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4-filt_short"), do_boot=FALSE)
-			lmm_sqrt4[[i,j]] <- fit_cd4_model("sqrt_cd4", cd4_meas_filt_short_fups[[i,j]]$cd4_df_filt2, glue("{min_cl_size_choices[i]}-{tree_names[j]}-sqrt_cd4-filt_short_high_slopes"), do_boot=FALSE)
+			next
 		}
 	}
 }
 
-# saveRDS(lmm2, glue("{RDS_PATH}/lmm2.rds"))
-# saveRDS(lmm_sqrt2, glue("{RDS_PATH}/lmm_sqrt2.rds"))
-# saveRDS(lmm3, glue("{RDS_PATH}/lmm3.rds"))
-# saveRDS(lmm_sqrt3, glue("{RDS_PATH}/lmm_sqrt3.rds"))
-#saveRDS(lmm4, glue("{RDS_PATH}/lmm4.rds"))
-#saveRDS(lmm_sqrt4, glue("{RDS_PATH}/lmm_sqrt4.rds"))
+saveRDS(lmm2, glue("{RDS_PATH}/lmm2.rds"))
+saveRDS(lmm_sqrt2, glue("{RDS_PATH}/lmm_sqrt2.rds"))
 
-r2_corrs2 <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names)) 
+# join signif together
+lmm2 <- readRDS(glue("{RDS_PATH}/lmm2.rds"))
+lmm_sqrt2 <- readRDS(glue("{RDS_PATH}/lmm_sqrt2.rds"))
+cd4_pot_cd4_vois <- sqrt_cd4_pot_cd4_vois <- matrix(list(), nrow=length(min_cl_size_choices), ncol=length(tree_names))
 for(i in 1:length(min_cl_size_choices)) {
 	for(j in 1:length(tree_names)) {
 		print(glue("{min_cl_size_choices[i]}-{tree_names[j]}"))
-		print("untrans CD4 - outlying filter")
-		r2.corr.mer(lmm2[[1,4]]$fit)
-		print("untrans CD4 - short follow-up filter")
-		r2.corr.mer(lmm3[[1,4]]$fit)
-		print("untrans CD4 - short follow-up + high slope filter")
-		r2.corr.mer(lmm4[[1,4]]$fit)
-		print("sqrt CD4 - outlying filter")
-		r2.corr.mer(lmm_sqrt2[[1,4]]$fit)
-		print("sqrt CD4 - short follow-up filter")
-		r2.corr.mer(lmm_sqrt3[[1,4]]$fit)
-		print("sqrt CD4 - short follow-up + high slope filter")
-		r2.corr.mer(lmm_sqrt4[[1,4]]$fit)
+		cd4_pot_cd4_vois[[i,j]] <- lmm2[[i,j]]$table_pt_estims_p[lmm2[[i,j]]$table_pt_estims_p$t_value < 0 & lmm2[[i,j]]$table_pt_estims_p$p_value <= 0.05,]
+		if(nrow(cd4_pot_cd4_vois[[i,j]]) > 0) cd4_pot_cd4_vois[[i,j]]$mcs_subtype <- glue("{min_cl_size_choices[i]}-{tree_names[j]}")
+		sqrt_cd4_pot_cd4_vois[[i,j]] <- lmm_sqrt2[[i,j]]$table_pt_estims_p[lmm_sqrt2[[i,j]]$table_pt_estims_p$t_value < 0 & lmm_sqrt2[[i,j]]$table_pt_estims_p$p_value <= 0.05,]
+		if(nrow(sqrt_cd4_pot_cd4_vois[[i,j]]) > 0) sqrt_cd4_pot_cd4_vois[[i,j]]$mcs_subtype <- glue("{min_cl_size_choices[i]}-{tree_names[j]}")
+	}
+}
+cd4_pot_cd4_vois_df <- do.call(rbind, cd4_pot_cd4_vois)
+cd4_pot_cd4_vois_df <- cd4_pot_cd4_vois_df[!is.na(cd4_pot_cd4_vois_df$phylotype_coef),]
+saveRDS(cd4_pot_cd4_vois_df, glue("{RDS_PATH}/cd4_pot_cd4_vois_df.rds")) #23
+cd4_pot_cd4_vois_df_summ <- cd4_pot_cd4_vois_df %>% group_by(mcs_subtype) %>% summarise(n=n())
+print(cd4_pot_cd4_vois_df_summ)
+sqrt_cd4_pot_cd4_vois_df <- do.call(rbind, sqrt_cd4_pot_cd4_vois)
+sqrt_cd4_pot_cd4_vois_df <- sqrt_cd4_pot_cd4_vois_df[!is.na(sqrt_cd4_pot_cd4_vois_df$phylotype_coef),]
+saveRDS(sqrt_cd4_pot_cd4_vois_df, glue("{RDS_PATH}/sqrt_cd4_pot_cd4_vois_df.rds")) # 29
+sqrt_cd4_pot_cd4_vois_df_summ <- sqrt_cd4_pot_cd4_vois_df %>% group_by(mcs_subtype) %>% summarise(n=n())
+print(sqrt_cd4_pot_cd4_vois_df_summ)
+
+# agreements and disagreements cd4 and sqrt_cd4
+nrow(cd4_pot_cd4_vois_df) #23
+nrow(sqrt_cd4_pot_cd4_vois_df) #29
+agr_cd4_sqrt <- inner_join(cd4_pot_cd4_vois_df, sqrt_cd4_pot_cd4_vois_df, by=c("mcs_subtype","phylotype")) # 20 matches
+cd4_but_not_sqrt <- anti_join(cd4_pot_cd4_vois_df, sqrt_cd4_pot_cd4_vois_df, by=c("mcs_subtype","phylotype")) # 3
+sqrt_but_not_cd4 <- anti_join(sqrt_cd4_pot_cd4_vois_df, cd4_pot_cd4_vois_df, by=c("mcs_subtype","phylotype")) # 9
+
+# Table S8: ML CD4 model with random effect on phylotype
+cd4_ml_rand_eff_tables <- readRDS(glue("{RDS_PATH}/lmm2.rds"))
+cd4_ml_rand_eff_tables[[1,1]]$table_pt_estims_p$subtype <- tree_names[1]; cd4_ml_rand_eff_tables[[1,2]]$table_pt_estims_p$subtype <- tree_names[2] 
+cd4_ml_rand_eff_tables[[1,3]]$table_pt_estims_p$subtype <- tree_names[3]; cd4_ml_rand_eff_tables[[1,4]]$table_pt_estims_p$subtype <- tree_names[4] 
+cd4_ml_rand_eff_table <- rbind( cd4_ml_rand_eff_tables[[1,1]]$table_pt_estims_p, cd4_ml_rand_eff_tables[[1,2]]$table_pt_estims_p, cd4_ml_rand_eff_tables[[1,3]]$table_pt_estims_p, cd4_ml_rand_eff_tables[[1,4]]$table_pt_estims_p )
+cd4_ml_rand_eff_table <- cd4_ml_rand_eff_table %>% dplyr::select( subtype, phylotype, phylotype_coef, se, t_value, p_value )
+cd4_ml_rand_eff_table <- cd4_ml_rand_eff_table[!is.na(cd4_ml_rand_eff_table$se),]
+cd4_ml_rand_eff_table <- cd4_ml_rand_eff_table %>% arrange( p_value, phylotype_coef )
+cd4_ml_rand_eff_table$phylotype_coef <- round(cd4_ml_rand_eff_table$phylotype_coef, 3)
+cd4_ml_rand_eff_table$se <- round(cd4_ml_rand_eff_table$se, 3)
+cd4_ml_rand_eff_table$t_value <- round(cd4_ml_rand_eff_table$t_value, 3)
+cd4_ml_rand_eff_table$p_value <- signif(cd4_ml_rand_eff_table$p_value, digits = 2)
+options(scipen=999)
+write.csv( cd4_ml_rand_eff_table, file=glue("{RESULTS_PATH}/tables/tableS8.csv"), quote=F, row.names = F )
+
+### After identyfing outliers using random effects model, fit individual fixed eff model for each VOI
+# non-VOI & backbone to GET EFFECT SIZE (preliminary analysis for mcs=30 and subtype B showed that comparing against "backbone" and "non-VOIs" [i.e. big group excluding VOI and backbone] does not make a difference)
+# using backbone because most likely to reflect contain ancestral state of the virus
+fit_cd4_model_fixed_eff_vois_vs_backbone_vs_nv <- function(outcome, fostr, cd4_df) { #, mcs_subtype_choice_cd4_transfdo_boot
+	
+	# assumes df already contain VOI, backbone and non-voi phylotypes
+	formula <- as.formula(paste(outcome, fostr)) 
+	fit <- lmer(formula, data=cd4_df, REML=FALSE, control = lmerControl(optimizer = "bobyqa"))
+	#print(summary(fit))
+	
+	summ_df <- data.frame(phylotype=names(summary(fit)$coefficients[,1]), estimate=round( unname(summary(fit)$coefficients[,1]), 3), 
+																	stderr=round( unname(summary(fit)$coefficients[,2]), 3), t_val=round( unname(summary(fit)$coefficients[,3]), 3))
+	summ_df <- summ_df[order(summ_df$estimate), ]
+	summ_df$norm <- summ_df$t_val |> pnorm() # note left tail only (negative t values)
+	summ_df$p_value <- summ_df$norm / 2 # one tail test
+	summ_df$p_value <- signif(summ_df$p_value, digits = 2)
+	summ_df_pts <- summ_df[ grepl(summ_df$phylotype, pattern = 'years_since_1cd4:phylotype'), ] #years_since_1cd4:phylotype
+	summ_df_pts$phylotype <- gsub("years_since_1cd4:phylotype", "", as.character(summ_df_pts$phylotype))
+	
+	summ_df_pts_interc <- summ_df[ grepl(summ_df$phylotype, pattern = '^phylotype'), ]
+	summ_df_pts_interc$phylotype <- gsub("^phylotype", "", as.character(summ_df_pts_interc$phylotype))
+	
+	return(list(all_covar=summ_df, pt_effs=summ_df_pts, pt_interc=summ_df_pts_interc))
+}
+
+# prepare dataframes to contain each VOI, backbone, and non-voi labels
+# d_fixedeff_vois_ref_bb: dfs with backbone as reference
+# d_fixedeff_vois_ref_nv: dfs with non-vois as reference (not using anymore)
+
+library(tidyr)
+residuals_removal_mx2 <- residuals_removal_mx 
+rownames(residuals_removal_mx2) <- c("30","50","100")
+colnames(residuals_removal_mx2) <- c("A_A1","CRF_02_AG","C", "B")
+backbone_cl_control2 <- backbone_cl_control
+rownames(backbone_cl_control2) <- c("30","50","100")
+colnames(backbone_cl_control2) <- c("A_A1","CRF_02_AG","C", "B")
+
+d_fixedeff_vois <- d_fixedeff_vois_ref_bb <- res_fixeff_vois_vs_bb <- list()
+cd4_model_form_with_intercept_pt <- " ~ years_since_1cd4 + age_group + years_since_1cd4 * sexid + years_since_1cd4:exposureid + years_since_1cd4:phylotype + phylotype + (years_since_1cd4 | patientindex)"
+for(i in 1:nrow(cd4_pot_cd4_vois_df)) {
+	print(paste0( cd4_pot_cd4_vois_df[i,"mcs_subtype"],"-", cd4_pot_cd4_vois_df[i,"phylotype"] ))
+	cd4_pot_cd4_vois_df2 <- cd4_pot_cd4_vois_df %>% separate(mcs_subtype, into = c("mcs", "subtype"), sep = "-", convert = FALSE)
+	d_fixedeff <- residuals_removal_mx2[[ cd4_pot_cd4_vois_df2[i, "mcs"], cd4_pot_cd4_vois_df2[i, "subtype"] ]]$cd4_df_filt
+	print(nrow(d_fixedeff))
+	d_fixedeff_vois[[i]] <- d_fixedeff
+	d_fixedeff_vois[[i]]$phylotype <- ifelse( d_fixedeff$cluster ==  as.integer(backbone_cl_control2[[ cd4_pot_cd4_vois_df2[i, "mcs"], cd4_pot_cd4_vois_df2[i, "subtype"] ]]), 
+																																											yes=as.character(backbone_cl_control2[[ cd4_pot_cd4_vois_df2[i, "mcs"], cd4_pot_cd4_vois_df2[i, "subtype"] ]]),
+																																											no=ifelse( d_fixedeff$cluster == as.integer(cd4_pot_cd4_vois_df2$phylotype[ i ]), 
+																																																						yes= as.integer(cd4_pot_cd4_vois_df2$phylotype[ i ]), 
+																																																						no=as.character("non-VOI") ))
+	d_fixedeff_vois[[i]] <- d_fixedeff_vois[[i]][ d_fixedeff_vois[[i]]$phylotype != "non-VOI", ]
+	d_fixedeff_vois[[i]]$phylotype <- as.factor(d_fixedeff_vois[[i]]$phylotype)
+	print(table(d_fixedeff_vois[[i]]$phylotype))
+	d_fixedeff_vois_ref_bb[[i]] <- d_fixedeff_vois[[i]] %>% mutate(phylotype = relevel(phylotype, ref=backbone_cl_control2[[ cd4_pot_cd4_vois_df2[i, "mcs"], cd4_pot_cd4_vois_df2[i, "subtype"] ]]), age_group = relevel(age_group, ref="30-39"), sexid = relevel(sexid, ref="Male"), exposureid = relevel(exposureid, ref="Homo/bisexual") )
+	res_fixeff_vois_vs_bb[[i]] <- fit_cd4_model_fixed_eff_vois_vs_backbone_vs_nv("cd4", cd4_model_form_with_intercept_pt, d_fixedeff_vois_ref_bb[[i]])
+																																																																														#, glue("{min_cl_size_choices[i]}-{tree_names[j]}-cd4-fixed_eff_voi_{sigs$phylotype}_vs_bb"))
+	print(res_fixeff_vois_vs_bb[[i]]$pt_effs)
+	res_fixeff_vois_vs_bb[[i]]$pt_effs$mcs <- cd4_pot_cd4_vois_df2$mcs[i]
+	res_fixeff_vois_vs_bb[[i]]$pt_effs$subtype <- cd4_pot_cd4_vois_df2$subtype[i]
+	
+	res_fixeff_vois_vs_bb[[i]]$pt_interc$mcs <- cd4_pot_cd4_vois_df2$mcs[i]
+	res_fixeff_vois_vs_bb[[i]]$pt_interc$subtype <- cd4_pot_cd4_vois_df2$subtype[i]
+}
+
+# summarise $pt_effs and extract mean and sd of slope
+cd4_ml_fixeff_pot_vois2 <- do.call(rbind, lapply(res_fixeff_vois_vs_bb, function(x) x$pt_effs)) # 23
+cd4_ml_fixeff_pot_vois <- cd4_ml_fixeff_pot_vois2
+cd4_ml_fixeff_pot_vois <- cd4_ml_fixeff_pot_vois[cd4_ml_fixeff_pot_vois$mcs=="30",] #12
+mean(cd4_ml_fixeff_pot_vois$estimate)
+sd(cd4_ml_fixeff_pot_vois$estimate)
+
+# same as above for intercept
+cd4_ml_fixeff_pot_vois_intercept2 <- do.call(rbind, lapply(res_fixeff_vois_vs_bb, function(x) x$pt_interc))
+cd4_ml_fixeff_pot_vois_intercept <- cd4_ml_fixeff_pot_vois_intercept2
+cd4_ml_fixeff_pot_vois_intercept <- cd4_ml_fixeff_pot_vois_intercept[cd4_ml_fixeff_pot_vois_intercept$mcs=="30",] #12
+mean(cd4_ml_fixeff_pot_vois_intercept$estimate)
+sd(cd4_ml_fixeff_pot_vois_intercept$estimate)
+
+# For fig. 1 (tree+vl & cd4 estimates): run fixed effects model on each phylotype and non-VOIs against backbone (mcs=30, subtype B)
+d_fixedeff_all_b <- d_fixedeff_all_b_ref_bb <- res_fixeff_all_b_vs_bb <- list()
+for(i in 1:154) {
+	print(i)
+	d_fixedeff2 <- residuals_removal_mx2[[ 1,4 ]]$cd4_df_filt
+	d_fixedeff_all_b[[i]] <- d_fixedeff2
+	d_fixedeff_all_b[[i]]$phylotype <- ifelse( d_fixedeff2$cluster ==  as.integer(backbone_cl_control2[[ 1,4 ]]), 
+																																												yes=as.character(backbone_cl_control2[[ 1,4 ]]),
+																																												no=ifelse( d_fixedeff2$cluster == i, 
+																																																							yes= i, 
+																																																							no=as.character("non-VOI") ))
+	d_fixedeff_all_b[[i]] <- d_fixedeff_all_b[[i]][ d_fixedeff_all_b[[i]]$phylotype != "non-VOI", ]
+	print(length(unique(d_fixedeff_all_b[[i]]$cluster)))
+	if(i == as.integer(backbone_cl_control2[[ 1,4 ]]) | length(unique(d_fixedeff_all_b[[i]]$cluster)) < 2) {
+		next
+	} else {
+		d_fixedeff_all_b[[i]]$phylotype <- as.factor(d_fixedeff_all_b[[i]]$phylotype)
+		print(table(d_fixedeff_all_b[[i]]$phylotype))
+		d_fixedeff_all_b_ref_bb[[i]] <- d_fixedeff_all_b[[i]] %>% mutate(phylotype = relevel(phylotype, ref=backbone_cl_control[[ 1,4 ]]), age_group = relevel(age_group, ref="30-39"), sexid = relevel(sexid, ref="Male"), exposureid = relevel(exposureid, ref="Homo/bisexual") )
+		res_fixeff_all_b_vs_bb[[i]] <- fit_cd4_model_fixed_eff_vois_vs_backbone_vs_nv("cd4",cd4_model_form_with_intercept_pt, d_fixedeff_all_b_ref_bb[[i]])
 	}
 }
 
-# For B30
-# ~0.85 (previously 0.78)
-# # ~0.88 (previosly 0.87)
-
-### lmm1 random effects
-# Groups       Name             Variance Std.Dev. Corr 
-# patientindex (Intercept)      45678.98 213.726       
-# years_since_1cd4   900.22  30.004  -0.54
-# phylotype    (Intercept)        592.41  24.340       
-# years_since_1cd4    54.24   7.365  0.49 
-# Residual                      21061.44 145.126       
-# Number of obs: 31562, groups:  patientindex, 8948; phylotype, 151
-
-### lmm2 random effects
-# Groups       Name             Variance Std.Dev. Corr 
-# patientindex (Intercept)      46720.16 216.148       
-# years_since_1cd4  1348.78  36.726  -0.48
-# phylotype    (Intercept)        657.62  25.644       
-# years_since_1cd4    65.05   8.066  0.72 
-# Residual                      13379.87 115.671       
-# Number of obs: 31551, groups:  patientindex, 8948; phylotype, 151
-
-# variance of patient and phylotype random effects increase, correlations similar, but overall variance decreased
+# join all phylotype slopes together
+res_fixeff_all_b_vs_bb_combined <- do.call(rbind, lapply(res_fixeff_all_b_vs_bb, function(x) x$pt_effs))
+#res_fixeff_all_b_vs_bb_combined <- res_fixeff_all_b_vs_bb_combined[res_fixeff_all_b_vs_bb_combined$phylotype != "non-VOI",]
+saveRDS(res_fixeff_all_b_vs_bb_combined, glue("{RDS_PATH}/res_fixeff_all_b_vs_bb_combined.rds") )
