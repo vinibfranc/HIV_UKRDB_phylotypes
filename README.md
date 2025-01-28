@@ -15,5 +15,5 @@ Available at SSRN: https://ssrn.com/abstract=4929798
 The analyses presented previously in the preprint were improved here, including, in particular, 
 comparisons against other partitioning methods, enhanced viral load and CD4 decline models, 
 and a new selection of VOIs. Despite these enhancements, the results remain largely consistent
-with those reported in the preprint. The more robust and updated analysis reported here 
+with those reported in the preprint. The more robust and updated analyses reported here 
 have been submitted to a journal.
