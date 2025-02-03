@@ -1,6 +1,6 @@
 # Derive consensus sequence for each phylotype
 
-libs_load <- c("glue", "ape", "seqinr", "lubridate")
+libs_load <- c("glue", "ape", "seqinr", "lubridate", "data.table")
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
 RESULTS_PATH="results"
@@ -40,7 +40,7 @@ cs <- lapply( sids, function(ptsids){
 system(glue("mkdir -p {RESULTS_PATH}/15_consensus/"))
 write.fasta( cs, names=PTS, file = glue('{RESULTS_PATH}/15_consensus/pt_consensus.fasta'))
 
-# GenBank submission below
+# Zenodo submission below
 d_cons <- d_cons_join <- list()
 tree_names_adj <- c("A1","CRF02AG","C","B")
 for(i in 1:length(tree_names_adj)) {
@@ -73,9 +73,9 @@ cs <- lapply( sids, function(ptsids){
 })
 
 system(glue("mkdir -p {RESULTS_PATH}/15_consensus/"))
-write.fasta( cs, names=glue("{PTS}_phylotype_consensus [organism=Human immunodeficiency virus 1] pol gene, partial cds"), file = glue('{RESULTS_PATH}/15_consensus/pt_consensus_genbank.fasta'))
+write.fasta( cs, names=glue("{PTS}_phylotype_consensus"), file = glue('{RESULTS_PATH}/15_consensus/phylotype_consensus.fasta'))
 
-# trim end manually to keep 1302 nucleotides of length and delete all gaps in all sequences
+# IMPORTANT: trim end manually to keep 1302 nucleotides of length and delete all gaps in all sequences (e.g. using AliView)
 
 # get rane of dates of seqs in phylotypes
 seq_ranges_df <- readRDS(file=glue("{RDS_PATH}/demog_seq_filters_df.rds"))
@@ -86,6 +86,11 @@ dates <- lapply( PTS, function(pt){
 })
 dates <- sapply(dates, function(x) paste(x, collapse = "-"))
 
-notes_consensus <- "These sequences were derived from a cluster/phylotype analysis performed on the UK Drug Resistace Database dataset (no original GenBank submission of complete dataset) for subtypes A1, B, C, and CRF02AG. Therefore, collection dates represent the range of dates of the individual sequences for which a phylotype was called. Phylotypes were identified using subtype-specific time-scaled trees estimated using treedater v0.5.3. Samples sizes of those trees were, respectively, 2714, 24100, 11331, and 2743. Phylotypes were estimated using treestructure v0.3.1 with a minimum clade size of 30 and a bootstrap support threshold of 80%. The consensus phylotype sequences were obtained using seqinr v4.2.8 with the site majority method (i.e. high-frequency character is returned as consensus) and a minimum relative frequency threshold of 80%. Initially, some phylotypes were paraphyletic (n=30 of the submitted consensuses, listed IDs in paper Table S5; preprint available at https://doi.org/10.2139/ssrn.4929798). We resolved this by tracing the most recent common ancestor (MRCA) of all sequences in the phylotype until a monophyletic group was formed. Then called the consensus as mentioned above. There is no consensus sequence uploaded for the backbone phylotype (paraphyletic) of each subtype, which represents the large (~50% of samples) and diverse ancestral type from which all of the other phylotypes were descended."
-df_seqs <- data.frame(Sequence_ID=glue("{PTS}_phylotype_consensus"), Collection_date=dates, Country="United Kingdom", Host="Homo sapiens", Isolate=PTS, Note=notes_consensus)
-write.table(df_seqs, file=glue("{RESULTS_PATH}/15_consensus/source_modifier_table_UK_phylotypes.txt"), sep = "\t", quote = F, row.names = F)
+#notes_consensus <- "These sequences were derived from a cluster/phylotype analysis performed on the UK Drug Resistace Database dataset (no original GenBank submission of complete dataset) for subtypes A1, B, C, and CRF02AG. Therefore, collection dates represent the range of dates of the individual sequences for which a phylotype was called. Phylotypes were identified using subtype-specific time-scaled trees estimated using treedater v0.5.3. Samples sizes of those trees were, respectively, 2714, 24100, 11331, and 2743. Phylotypes were estimated using treestructure v0.3.1 with a minimum clade size of 30 and a bootstrap support threshold of 80%. The consensus phylotype sequences were obtained using seqinr v4.2.8 with the site majority method (i.e. high-frequency character is returned as consensus) and a minimum relative frequency threshold of 80%. Initially, some phylotypes were paraphyletic (n=30 of the submitted consensuses, listed IDs in paper Table S5; preprint available at https://doi.org/10.2139/ssrn.4929798). We resolved this by tracing the most recent common ancestor (MRCA) of all sequences in the phylotype until a monophyletic group was formed. Then called the consensus as mentioned above. There is no consensus sequence uploaded for the backbone phylotype (paraphyletic) of each subtype, which represents the large (~50% of samples) and diverse ancestral type from which all of the other phylotypes were descended."
+df_seqs <- data.frame(Sequence_ID=glue("{PTS}_phylotype_consensus"), Collection_date=dates, Country="United Kingdom", Host="Homo sapiens", Organism="Human immunodeficiency virus 1", Genomic_region="pol gene (entire protease and partial reverse transcriptase)") #Isolate=PTS, Note=notes_consensus
+write.csv(df_seqs, file=glue("{RESULTS_PATH}/15_consensus/phylotype_consensus.csv"), quote = F, row.names = F)
+
+# make sure id's match
+test_df <- read.csv(file=glue("{RESULTS_PATH}/15_consensus/phylotype_consensus_table.csv"), header=T)
+test_fasta <- read.FASTA(file=glue("{RESULTS_PATH}/15_consensus/phylotype_consensus.fasta"),type="DNA")
+filt <- test_df[test_df$Sequence_ID %in% names(test_fasta),]

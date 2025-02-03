@@ -6,6 +6,8 @@ data from the UK Drug Resistance Database to investigate HIV-1 variants with inc
 Individual-level HIV genetic, demographic, and clinical data from the UKRDB can be accessed for collaborative projects, 
 subject to the approval of a research proposal by the UKRDB Steering Committee.
 
+Phylotype-level consensus sequences have been deposited in Zenodo (https://doi.org/10.5281/zenodo.14792962).
+
 Provisionally, you can cite this preprint:
 
 Franceschi, Vinicius B. and Drake, Kieran O. and Bibby, David F. and Sabin, Caroline and Dunn, David T. and Mbisa, Jean L. and Volz, Erik. 
