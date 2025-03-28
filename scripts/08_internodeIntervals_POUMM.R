@@ -1,4 +1,4 @@
-libs_load <- c("glue","dplyr","forcats", "ape", "lubridate", "ggplot2",  "phytools", "data.table", "motmot", "geiger", "phylolm")
+libs_load <- c("glue","dplyr","forcats", "ape", "lubridate", "ggplot2",  "phytools", "data.table", "POUMM") #"motmot", "geiger", "phylolm"
 invisible( lapply(libs_load, library, character.only=TRUE) )
 
 ### 1. Internode lengths, used as estimates of maximum transmission intervals, based on: ###
@@ -87,68 +87,109 @@ sd(ii_all_df$internode_intervals_months[ii_all_df$status == "VOI"]) #26.6
 # Anyway values for VOIs seem a bit lower, suggesting faster transmission (but maybe should compare against non-VOIs with matched demog data instead)
 # PERHAPS could plot internode intervals (y) over time coloured by VOI status OR ii (y) by phylotype
 
-### 2. Pagel's Lambda / phylo-informed glm testing association between genetic distance and viral load ###
-
-# Pagel’s lambda is a measure of phylogenetic ‘signal’ in which the degree to which shared history of taxa has driven trait distributions at tips. 
-# In this model, internal branch lengths are transformed by the lambda parameter value. When the parameter lambda equals 1, 
-# branches are transformed by multiplying by 1 and so the model is equal to Brownian motion (high phylogenetic signal). 
-# Values of lambda under 1 suggest there has been less influence of shared history on trait values at the tips. 
-# Finally, a lambda value of 0 indicates no phylogenetic influence on trait distributions, 
-# and is equivalent to a ‘star phylogeny’ with no shared branch lengths.
-
-# estimate lambda and plot out with CIs for VOIs/non-VOIs coloured
-res_pagels_lambda_mm <- glue("{RES_PATH}/08_lambda_mm")
-res_pagels_lambda_geig_fc <- glue("{RES_PATH}/08_lambda_geig_fc")
-res_pagels_lambda_phylolm <- glue("{RES_PATH}/08_lambda_phylolm")
-system(glue("mkdir -p {res_pagels_lambda_mm}"))
-system(glue("mkdir -p {res_pagels_lambda_geig_fc}"))
-system(glue("mkdir -p {res_pagels_lambda_phylolm}"))
-NCPU <- 1
-
+# 2. Phylogenetic Ornstein-Uhlenbeck Mixed Model (https://github.com/venelin/POUMM)
 b_ml_tree <- readRDS(glue("{RDS_PATH}/tree_b_adj2.rds"))# ML tree
 vl_b <- readRDS(glue("{RDS_PATH}/vl_subtypes_comb2.rds"))[[1,4]] # mean VLs for treestructure phylotypes
-vl_b_trait_df <- vl_b %>% dplyr::select(taxon, mean_log_vl_pat, cluster)
-vl_b_trait_df2 <- as.data.frame(vl_b_trait_df)
+vl_b_vec <- vl_b$mean_log_vl_pat
+names(vl_b_vec) <- vl_b$taxon
+b_ml_tree_with_vl <- keep.tip(b_ml_tree, tip=names(vl_b_vec))
+b_ml_tree_with_vl$edge.length[b_ml_tree_with_vl$edge.length <= 0] <- 1e-6
 
-# match tips with VL info
-vl_b_trait_df_pt <- vl_b_trait_df[vl_b_trait_df2$taxon %in% b_ml_tree$tip.label,] #8810
-tree_with_vl <- keep.tip(b_ml_tree, tip=vl_b_trait_df_pt$taxon)
-vl_b_trait_mx <- as.matrix(vl_b_trait_df_pt)
-rownames(vl_b_trait_mx) <- vl_b_trait_mx[,1]
-vl_b_trait_mx <- vl_b_trait_mx[,-1]
-rownames_saved <- rownames(vl_b_trait_mx)
-vl_b_trait_mx <- apply(vl_b_trait_mx, 2, as.numeric)
-rownames(vl_b_trait_mx) <- rownames_saved
-trait_data <- sortTraitData(phy=tree_with_vl, y=vl_b_trait_mx, data.name="mean_log_vl_pat", log.trait = F)
-phy <- trait_data$phy
-vl <- trait_data$trait
+#all(b_ml_tree_with_vl$tip.label %in% names(vl_b_vec))
+#all(names(vl_b_vec) %in% b_ml_tree_with_vl$tip.label)
+vl_b_vec_ord <- vl_b_vec[b_ml_tree_with_vl$tip.label]
 
-# fit model on continuous trait (VL) - bayes option geiger::fitContinuousMCMC (only BM and other models, but not lambda)
-geig_fc <- geiger::fitContinuous(phy=phy, dat = vl, model = "lambda", ncores=NCPU) # hessian should return CIs (but doesn't work): niter=1000, hessian=TRUE, CI=0.95 
-geig_fc_df <- data.frame(lambda_mean=geig_fc$opt$lambda)
-print(geig_fc_df) #lambda 0.13
+fit <- POUMM(vl_b_vec_ord, b_ml_tree_with_vl, spec=list(nSamplesMCMC = 5e5))
 
-### using phylolm for directly estimating parameters like lambda and integrating it into linear models
+plot_list <- plot(fit, showUnivarDensityOnDiag = TRUE, doPlot = FALSE)
+plot_list$traceplot
+plot_list$densplot
 
-vl_b_trait_df3 <- vl_b_trait_df2
-rownames(vl_b_trait_df3) <- vl_b_trait_df3$taxon
+summary(fit, mode="short") # make sure G.R. diag stat of H2tMean is close to 1.0 and ESS big
+# H2tMean GR: 1.0005123; H2tMean ESS: 614.3031 
+AIC(fit) #20316
+BIC(fit) #20351
+coef(fit)
+# alpha     theta     sigma    sigmae 
+# 39.996982  4.540723  2.907523  0.707682 
+logLik(fit) #-10153.19 (df=5)
+summary(fit)["H2tMean"==stat, PostMean]
+# 0.1668516
+summary(fit)["H2tMean"==stat, unlist(HPD)]
+# lower     upper 
+# 0.1155296 0.2164108
 
-phy2 <- phy
-phy2$edge.length[phy2$edge.length == 0] <- 1e-8
-			
-# lambda from viral load: crude estimate of heritability in the tree
-phylolm_lambda <- tryCatch({
-	phylolm(mean_log_vl_pat ~ 1, data = vl_b_trait_df3, phy = phy2, model = "lambda", boot=100) #sexid + ethnicityid + exposureid + age_group
-}, error = function(e) {
-	cat("phylolm error ", e$message, "\n")
-	return(list(NA))
-})
+#fitted(fit)
+#plot(resid(fit))
+#abline(h=0)
 
-# phylolm r2
-phylolm_lambda_cis <- data.frame(adj.r.squared = phylolm_lambda$adj.r.squared, 
-																																				lambda_bootmean=unname(phylolm_lambda$bootmean["lambda"]),
-																																				lambda_lower=unname(phylolm_lambda$bootconfint95[1,"lambda"]),
-																																				lambda_upper=unname(phylolm_lambda$bootconfint95[2,"lambda"]),
-																																				n = phylolm_lambda$n )
-phylolm_lambda_cis
-# 0.1332465    0.1054192    0.1571757
+# LRT PMM vs POUMM 
+specPMM <- specifyPMM(vl_b_vec_ord[1:length(vl_b_vec_ord)], b_ml_tree_with_vl)
+fitPMM <- POUMM(vl_b_vec_ord[1:length(vl_b_vec_ord)], b_ml_tree_with_vl, spec = specPMM, doMCMC=FALSE)
+lmtest::lrtest(fitPMM, fit)
+
+# Model 1: fitPMM
+# Model 2: fit
+# #Df LogLik Df  Chisq Pr(>Chisq)    
+# 1   3 -10161                         
+# 2   5 -10153  2 16.112  0.0003172 ***
+# POUMM outperforms PMM
+
+# When the goal is to estimate H2tMean, it is important to specify an uninformed prior
+# for it is the standard uniform distribution
+specH2tMean <- specifyPOUMM_ATH2tMeanSeG0(vl_b_vec_ord[1:length(vl_b_vec_ord)], b_ml_tree_with_vl, nSamplesMCMC = 5e5)
+specH2tMean$parMapping
+specH2tMean$parPriorMCMC
+specH2tMean$parLower
+specH2tMean$parUpper
+fitH2tMean <- POUMM(vl_b_vec_ord[1:length(vl_b_vec_ord)], b_ml_tree_with_vl, spec = specH2tMean)
+plot(fitH2tMean, stat = c("H2tMean", "H2e", "H2tInf", "sigmae"), 
+					doZoomIn = TRUE, doPlot = TRUE)
+
+# Without setting prior
+summary(fit)[stat %in% c("H2tMean", "H2e", "H2tInf", "sigmae")]
+# After setting prior
+summary(fitH2tMean)[stat %in% c("H2tMean", "H2e", "H2tInf", "sigmae")]
+# stat     N       MLE  PostMean                 HPD      ESS     G.R.
+# H2tMean  8789 0.1766551 0.1751541 0.1226263,0.2250284 471.8703 1.008458
+
+summary(fitH2tMean, mode="short")
+
+# stat     N           MLE      PostMean                   HPD      ESS     G.R.
+# <char> <int>         <num>         <num>                <list>    <num>    <num>
+# 	1:        alpha  8789  4.150998e+01  3.799054e+01     11.65091,62.88779 358.6051 1.048854
+# 2:        theta  8789  4.541916e+00  4.533195e+00     4.461899,4.597685 514.2835 1.103205
+# 3:      H2tMean  8789  1.766551e-01  1.751541e-01   0.1226263,0.2250284 471.8703 1.008458
+# 4:       sigmae  8789  7.061503e-01  7.082375e-01   0.6833217,0.7326625 425.3933 1.018878
+# 5:           g0  8789  4.986695e+00  4.904086e+00     3.964044,5.920047 900.0000 1.000845
+# 6:          H2e  8789  1.680528e-01  1.628470e-01   0.1044086,0.2209526 424.5134 1.019560
+# 7:       H2tInf  8789  1.774287e-01  1.807033e-01   0.1364770,0.2322744 616.5435 1.039486
+# 8:       H2tMax  8789  1.774281e-01  1.795980e-01   0.1336958,0.2270891 592.7275 1.005152
+# 9:        sigma  8789  2.988226e+00  2.843005e+00     1.660110,4.038409 373.7537 1.042285
+# 10: sigmaG2tMean  8789  1.069889e-01  1.065564e-01 0.07808788,0.13880326 491.1143 1.006938
+# 11:  sigmaG2tMax  8789  1.075581e-01  1.099179e-01 0.08099766,0.13952572 576.1890 1.014037
+# 12:  sigmaG2tInf  8789  1.075584e-01  1.110518e-01 0.08072732,0.14212615 632.9163 1.129484
+# 13:      logpost  8789            NA -1.016447e+04   -10167.88,-10162.06 485.8072 1.043612
+# 14:       loglik  8789 -1.015321e+04            NA                 NA,NA   0.0000       NA
+# 15:          AIC  8789  2.031641e+04            NA                 NA,NA   0.0000       NA
+# 16:         AICc  8789  2.031642e+04            NA                 NA,NA   0.0000       NA
+
+summary(fitH2tMean)["H2tMean"==stat, PostMean]
+# 0.1751541
+summary(fitH2tMean)["H2tMean"==stat, unlist(HPD)]
+# lower     upper 
+# 0.1226263 0.2250284 
+
+lmtest::lrtest(fitPMM, fitH2tMean)
+# Model 1: fitPMM
+# Model 2: fitH2tMean
+# #Df LogLik Df Chisq Pr(>Chisq)    
+# 1   3 -10161                        
+# 2   5 -10153  2 16.08  0.0003223 ***
+
+# plot trait intervals vs rtt distance
+data <- data.table(z = vl_b_vec_ord[1:length(vl_b_vec_ord)], t = nodeTimes(b_ml_tree_with_vl, tipsOnly = TRUE))
+data <- data[, group := cut(t, breaks = 5, include.lowest = TRUE)]
+
+ggplot(data = data, aes(x = t, y = z, group = group)) + 
+	geom_violin(aes(col = group)) + geom_point(aes(col = group), size=.5)
