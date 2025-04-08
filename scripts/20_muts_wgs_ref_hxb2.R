@@ -28,12 +28,12 @@ load_summarise_muts <- function(mut_csv_file) {
 	
 	# Adjust tat2 and rev2 mutations to be called continuously after tat1 and rev1
 	df_muts$mutations <- ifelse(df_muts$protein == "tat2",
-																																		yes=glue("{df_muts$protein}:{df_muts$ancsite}{(df_muts$site + 72)}{df_muts$mutsite}"),
-																																		no=df_muts$mutations)
-
+																													yes=glue("{df_muts$protein}:{df_muts$ancsite}{(df_muts$site + 72)}{df_muts$mutsite}"),
+																													no=df_muts$mutations)
+	
 	df_muts$mutations <- ifelse(df_muts$protein == "rev2",
-																																		yes=glue("{df_muts$protein}:{df_muts$ancsite}{(df_muts$site + 25)}{df_muts$mutsite}"),
-																																		no=df_muts$mutations)
+																													yes=glue("{df_muts$protein}:{df_muts$ancsite}{(df_muts$site + 25)}{df_muts$mutsite}"),
+																													no=df_muts$mutations)
 	
 	# order by genomic region: non-syn muts, then insertions, deletions, and syn muts
 	lvls <- c("gag","pol_pr", "pol_rt", "pol_p15", "pol_int", "vif", "vpr", "tat1", "tat2", "rev1", "rev2", "env_gp120", "env_gp41", "nef", "ins", "del", "SYNSNP")
@@ -51,19 +51,23 @@ load_summarise_muts <- function(mut_csv_file) {
 	mut_summary_prot_def <- mut_summary_def %>% group_by(protein) %>% summarise(n = n())
 	print("Number of mutations for each protein/feature defining mutations: ")
 	print(mut_summary_prot_def)
-
+	
 	list(indiv_muts = df_muts, mut_summary = mut_summary, mut_summary_def = mut_summary_def, mut_summary_prot_def = mut_summary_prot_def)
 }
 
+### 1. HXB2 ref calls ### 
 # `mut_calls/` has csv mut calls from gofasta
 # IMPORTANT: adding PT137 as well: because NO PT69 sequence and (1) PT137 consensus is closely related to PT69 and (2) both T-test on VL and CD4 analyses suggest it could be a VOI 
 # PT137 n=2 could help to narrow down muts by n=1 PT133 and n=16 PT40
-csv_calls <- list.files("results/20_gofasta_outputs/B", full.names = T) 
+csv_calls <- list.files("results/20_gofasta_outputs/ref_hxb2_B", full.names = T) 
 print(csv_calls)
 muts_ptB <- list()
 for(i in 1:length(csv_calls)) {
+	print(csv_calls[i])
 	muts_ptB[[i]] <- load_summarise_muts(csv_calls[i])
+	print("NROW mut_summary")
 	print(nrow(muts_ptB[[i]]$mut_summary))
+	print("NROW mut_summary_def")
 	print(nrow(muts_ptB[[i]]$mut_summary_def))
 }
 
@@ -437,3 +441,37 @@ for(i in 1:length(prev_files)) {
 
 df_summ_all <- rbindlist(df_summ)
 write.csv(df_summ_all, "results/20_prev_common_muts/01_aux_freqs.csv", quote=F, row.names = F)
+
+# Add column to Data S1 to say if mut fixed (part of consensus of ukhsa seqs) or not 
+# and report results accordingly 
+REF_SEQS_PATH="data/refs/"
+file_cons_vs_hxb2_muts <- glue("{REF_SEQS_PATH}/cons_ukhsa_muts_vs_hxb2.csv")
+muts_cons_vs_hxb2 <- load_summarise_muts(file_cons_vs_hxb2_muts)
+print(nrow(muts_cons_vs_hxb2$mut_summary)) #273
+print(nrow(muts_cons_vs_hxb2$mut_summary_def)) #273
+View(muts_cons_vs_hxb2$mut_summary_def)
+
+# Code below helps to manually flag consensus and non-consensus muts (Data S1 columns "present in COMPARE-HIV/INITiO consensus sequence?")
+
+#common_muts_vois_not_in_cons <- base::setdiff(common_muts_vois, muts_cons_vs_hxb2$mut_summary_def$mutations)
+#common_muts_vois_not_in_cons # 13
+
+# sheet 1: all VOIs combined
+common_muts_vois_plus_b137_not_in_cons <- base::setdiff(common_muts_vois_plus_b137, muts_cons_vs_hxb2$mut_summary_def$mutations) # 3
+common_muts_vois_plus_b137_not_in_cons # 3
+
+# sheet 2: PT40
+calls_b40_not_in_cons <- base::setdiff(calls_b40$mutation, muts_cons_vs_hxb2$mut_summary_def$mutations)
+calls_b40_not_in_cons #95
+
+# sheet 3: PT133
+calls_b133_not_in_cons <- base::setdiff(calls_b133$mutation, muts_cons_vs_hxb2$mut_summary_def$mutations)
+calls_b133_not_in_cons #607
+calls_b133_IN_cons <- intersect(calls_b133$mutation, muts_cons_vs_hxb2$mut_summary_def$mutations)
+calls_b133_IN_cons #149
+
+# sheet 4: PT137
+calls_b137_not_in_cons <- base::setdiff(calls_b137$mutation, muts_cons_vs_hxb2$mut_summary_def$mutations)
+calls_b137_not_in_cons #366
+calls_b137_IN_cons <- intersect(calls_b137$mutation, muts_cons_vs_hxb2$mut_summary_def$mutations)
+calls_b137_IN_cons #159
