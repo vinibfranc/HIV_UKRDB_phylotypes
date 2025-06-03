@@ -109,7 +109,7 @@ tab_post_art <- tab_post_art %>% dplyr::select( phylotype_coef, Q2.5, Estimate, 
 tab_post_art <- tab_post_art %>% mutate(across(c(Q2.5, Estimate, Q97.5, Est.Error), ~ round(.x, 3)))
 tab_post_art <- tab_post_art %>% arrange(desc(Estimate))
 options(scipen=999)
-write.csv( tab_post_art, file=glue("{RESULTS_PATH}/tables/tableS15.csv"), quote=F, row.names = F )
+write.csv( tab_post_art, file=glue("{RESULTS_PATH}/tables/tableS17.csv"), quote=F, row.names = F )
 
 # CIs too big and sample sizes too small, so just plot slopes labelled by VOI, non-VOI and backbone
 cd4_after_art_subtypes_B_pts2_feff2$phylotype <- as.character(cd4_after_art_subtypes_B_pts2_feff2$phylotype)

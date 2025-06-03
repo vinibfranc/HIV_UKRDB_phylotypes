@@ -63,13 +63,13 @@ cd4_more_2_measur <- plot_cd4_measurement_distributions(cd4_md, "all")
 cd4_md_mult <- cd4_md[cd4_md$patientindex %in% unique(cd4_md$patientindex[duplicated(cd4_md$patientindex)]),]
 print(nrow(cd4_md_mult)); print(length(unique(cd4_md_mult$patientindex)))
 
-remove_cd4_after_art <- function(demog_md_choice, subtype_choice) {
+remove_cd4_after_art <- function(demog_md_choice, subtype_choice, cd4_md_) {
 	demog_md_choice <- demog_md_choice[demog_md_choice$rega3subtype == subtype_choice,]
 	print("rows subtype md:")
 	print(nrow(demog_md_choice))
 	demog_md_choice$artstart_decimal_date <- decimal_date( as.Date(gsub("\\/", "15", demog_md_choice$artstart_my), "%m%d%Y") )
 	#View(demog_md_choice)
-	demog_md_cd4_merged <- demog_md_choice %>% left_join(cd4_md_mult, by="patientindex", relationship="many-to-many") #multiple="all"
+	demog_md_cd4_merged <- demog_md_choice %>% left_join(cd4_md_, by="patientindex", relationship="many-to-many") #multiple="all"
 	suppressWarnings( cd4_before_art <- demog_md_cd4_merged %>% filter(cd4_decimal_date <= artstart_decimal_date) )
 	
 	# for the df above I have for each sample all measurements of CD4
@@ -79,6 +79,9 @@ remove_cd4_after_art <- function(demog_md_choice, subtype_choice) {
 	# Here removes duplicates of patient and cd4 date
 	cd4_before_art_cl <- cd4_before_art %>% distinct(patientindex, cd4_decimal_date, .keep_all = TRUE)
 	cd4_before_art_cl <- cd4_before_art_cl[ , !names(cd4_before_art_cl) %in%  c("testindex","dbsample_date")]
+	# keep all
+	cd4_before_art_cl2 <- cd4_before_art_cl
+	# only ones with >1 meas
 	cd4_before_art_cl <- cd4_before_art_cl[cd4_before_art_cl$patientindex %in% unique(cd4_before_art_cl$patientindex[duplicated(cd4_before_art_cl$patientindex)]),]
 	#View(cd4_before_art_cl)
 	print("nrows cd4 before art")
@@ -111,7 +114,7 @@ remove_cd4_after_art <- function(demog_md_choice, subtype_choice) {
 	lookup_pat_tests <- lookup_pat_tests[lookup_pat_tests$patientindex %in% cd4_before_art_cl$patientindex,]
 	print(length(unique(lookup_pat_tests$patientindex)))
 	
-	list(cd4_before_art_cl, lookup_pat_tests)
+	list(cd4_before_art_cl, lookup_pat_tests, cd4_before_art_cl2)
 }
 
 demog_md_subtype_match <- readRDS(glue("{RDS_PATH}/demog_md_subtype_match.rds")) #100591
@@ -123,7 +126,7 @@ subtype_choices <- c("A (A1)","CRF 02_AG","C", "B")
 cd4_before_art_subtypes <- list()
 for(i in 1:length(subtype_choices)) {
 	print(subtype_choices[i])
-	cd4_before_art_subtypes[[i]] <- remove_cd4_after_art(demog_md_subtype_match, subtype_choices[i])
+	cd4_before_art_subtypes[[i]] <- remove_cd4_after_art(demog_md_subtype_match, subtype_choices[i], cd4_md_mult)
 }
 # CD4 before diagnosis (perhaps before HIV infection) -> A1: 6 patients, CRF: 12, C: 35; B: 122
 # if flagging only the ones more than 3 months before diagnosis -> A1: 4 patients, CRF: 9, C: 21; B: 90

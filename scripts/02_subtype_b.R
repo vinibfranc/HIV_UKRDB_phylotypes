@@ -58,7 +58,7 @@ tree_b_adj <- ape::root(tree_b_adj, outgroup=glue("{root_tip_c}"), resolve.root=
 saveRDS(tree_b_adj, "rds/tree_b_adj.rds")
 saveRDS(subtype_b_sampleTimes, "rds/subtype_b_sampleTimes.rds")
 
-##### NOTE: had to use ape dev version because of issue with dist.nodes [tree too big], which is enhanced for larger trees in dev version
+##### NOTE: had to use ape dev version >=5.7.1.2 because of issue with dist.nodes [tree too big], which is enhanced for larger trees in dev version
 raw_clock_b <- readRDS("rds/raw_clock_b.rds")
 # Unable to converge with additive model
 #timetree_b <- dater( tree_b_adj, subtype_b_sampleTimes, s=n_sites_aln, clock='additive', omega0=unlist(raw_clock_b), ncpu=NCPU) #median(unlist(raw_clock_rates))

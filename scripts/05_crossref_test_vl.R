@@ -521,7 +521,6 @@ View(inner_join_vl_vois)
 # PT20 not matching signif from fb
 # trestruct VOIs estimates (PT101, PT20, PT40, PT69): 4.90, 4.81 (no correspondence), 4.91, 4.86
 # fastbaps VOIs estimates (PT21, x, PT3, PT118):      4.79, no correspondence,        4.85, 4.79
-# the PT that does not match (PT20 from trestruct is paraphyletic!)
 
 ### same model for treecluster partitions gd=0.075, method=avg_clade (only doing for subtype B as none other PT signif in VL analysis in other subtypes) ###
 res_treecluster <- glue("{RESULTS_PATH}/03_treecluster/B/")

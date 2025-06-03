@@ -174,7 +174,7 @@ f3_3 <- gheatmap(f3_2, contre_100_all_vl[, "quantile_0.5", drop=FALSE], width = 
 contre_100_all_regr <- contre_100_all %>% dplyr::select(tip, estimate, stderr)
 rownames(contre_100_all_regr) <- contre_100_all_regr$tip
 contre_100_all_regr$tip <- NULL #156 rows
-contre_100_all_regr <- contre_100_all_regr[contre_100_all_regr$stderr <= 30,] # remove CD4 coefficients when stderr is above 40; 148 rows
+contre_100_all_regr <- contre_100_all_regr[contre_100_all_regr$stderr <= 30,] # remove CD4 coefficients when stderr is above 30; 141 rows
 
 range(contre_100_all_regr$estimate,na.rm=T)
 max_cd4 <- 60

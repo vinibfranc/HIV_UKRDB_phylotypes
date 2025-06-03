@@ -4,7 +4,6 @@ invisible( lapply(libs_load, library, character.only=TRUE) )
 DATA_PATH="data"
 RDS_PATH="rds"
 RESULTS_PATH="results"
-#dir.create( RESULTS_PATH )
 
 min_cl_size_choices <- c(30, 50, 100) #250,500
 tree_names <- c("A_A1","CRF_02_AG","C","B")
@@ -59,12 +58,68 @@ for(i in 1:length(unique(d_cd4_ages$phylotype))) {
 	suppressMessages( ggsave(file=glue("{RESULTS_PATH}/07_cd4regr_points/30-B/phylotype_{i}.png"), dpi=600, width=5, height=4) )
 }
 
-### BEGIN FIGURE 2D ###
+###
+# fig. 2B, average decline of VOIs with uncertainty
+###
 
-#age_group_palette <- c("0-29"="#F7BC00", "30-39"="#F27F0C", "40-49"="#925E9F", "50-59"="#ff4654", "60+"="#6d1723")
-age_group_palette <- c("0-29" = "#E69F00","30-39" = "#CC79A7", "40-49" = "#009E73", "50-59" = "#F0E442", "60+" = "#0072B2")
+cd4_measur_palette <- c("1"="#56B4E9","2"="#377EB8","3"="#D55E00","4"="#009E73", "5"="#E69F00")
 
+### BEGIN FIGURE S8 ###
+# Stacked bar of nth measurements per year considering all phylotypes 
+d_cd4$year <- lubridate::year(as.Date(date_decimal(d_cd4$cd4_decimal_date)))
+d_cd4$year <- as.character(d_cd4$year)
+print(length(unique(d_cd4$patientindex))) #8946
+print(nrow(d_cd4)) #31503
+d2 <- d_cd4 %>% group_by(measurement_id, year) %>% summarise(meas_year_n = n()) # measurement for each patient and group by it
+d2$measurement_id <- as.factor(d2$measurement_id)
+# Plot distribution of CD4 measurements order over time
+options(scipen=999)
 leg <- theme(text=element_text(family="Helvetica"), axis.text=element_text(size=10, color="black"), axis.title=element_text(size=10, color="black", face="bold"))
+ggplot(d2, aes(fill=measurement_id, y=year, x=meas_year_n)) + #scale_fill_viridis(discrete=T, name="CD4 measurement order") +
+	scale_fill_manual(values=cd4_measur_palette, name="CD4 measurement episode") +
+	geom_bar(position = position_stack(reverse = TRUE), stat="identity") + labs(x="CD4 measurements", y="Year") + theme_classic() + #position="stack"
+	theme(axis.text=element_text(colour="black"), legend.key.size = unit(1.5, 'cm'), legend.key.height = unit(0.5, 'cm'), legend.key.width = unit(0.5, 'cm'),legend.title = element_text(size=10), legend.position="top") +
+	leg + scale_x_continuous(expand = c(0,0)) + scale_y_discrete(expand = c(0,0)) 
+ggsave(file=glue("{RESULTS_PATH}/figs/figS8.eps"), dpi=600, width=8, height=6, bg="white")
+ggsave(file=glue("{RESULTS_PATH}/figs/figS8.jpg"), dpi=600, width=8, height=6, bg="white")
+### END FIGURE S8 ###
+
+# Same as above but 1 plot per phylotype
+d3 <- d_cd4 %>% group_by(measurement_id, year, phylotype) %>% summarise(meas_year_n = n())
+d3$measurement_id <- as.factor(d3$measurement_id)
+
+for(i in 1:154) {
+	if(i == 6 || i == 153) next
+	d3 %>% filter(phylotype==i) %>% ggplot(aes(fill=measurement_id, y=year, x=meas_year_n)) + scale_fill_manual(values=cd4_measur_palette, name="CD4 measurement episode") +
+		geom_bar(position = position_stack(reverse = TRUE), stat="identity") + labs(x="CD4 measurements", y="Year") + theme_bw() + 
+		theme(axis.text=element_text(colour="black"), legend.key.size = unit(1.5, 'cm'), legend.key.height = unit(0.5, 'cm'), legend.key.width = unit(0.5, 'cm'),legend.title = element_text(size=10), legend.position="top")
+	#system(glue("mkdir -p {RESULTS_PATH}/07_cd4regr_plots/30-B/stackbar_phylotypes/"))
+	suppressMessages( ggsave(file=glue("{RESULTS_PATH}/07_cd4regr_plots/30-B/stackbar_phylotypes/phylotype_{i}_measur_years.png"), dpi=600, width=8, height=6) )
+}
+
+### BEGIN FIGURE S9A-C ###
+s3_pl <- list()
+c <- 1
+subtype_b_vois_ids_only <- c(40,69,133)
+for(i in subtype_b_vois_ids_only) {
+	s3_pl[[c]] <- d3 %>% filter(phylotype==i) %>% ggplot(aes(fill=measurement_id, y=year, x=meas_year_n)) +
+		geom_bar(position = position_stack(reverse = TRUE), stat="identity") + theme_classic() +
+		scale_fill_manual(values=cd4_measur_palette, name="CD4 measurement\nepisode") + 
+		#scale_x_continuous(expand = c(0,0), limits=c(0, 70), breaks=c(5,10,20,30,40,50,60,70)) + 
+		scale_x_continuous(expand = c(0,0)) + scale_y_discrete(expand = c(0,0)) + 
+		theme(legend.position="top", legend.key.size = unit(1.5, 'cm'), legend.key.height = unit(0.5, 'cm'), legend.key.width = unit(0.5, 'cm'), 
+								legend.title = element_text(family=helv, size=8), legend.text=element_text(size=7), plot.margin = margin(0.5, 0.25, 0.25, 0.25, "cm"), axis.title.x=element_blank(), axis.title.y=element_blank(), 
+								axis.text.y=element_text(size=6)) + guides(fill = guide_legend(nrow = 2)) + leg #+
+	c = c+1
+}
+
+s3_pl[[1]] <- s3_pl[[1]] + scale_x_continuous(expand = c(0,0), limits=c(0, 15), breaks=c(0,5,10,15))
+s3_pl[[2]] <- s3_pl[[2]] + scale_x_continuous(expand = c(0,0), limits=c(0, 15), breaks=c(0,5,10,15))
+s3_pl[[3]] <- s3_pl[[3]] + scale_x_continuous(expand = c(0,0), limits=c(0, 15), breaks=c(0,5,10,15))
+
+### FIGURE S9D ###
+
+age_group_palette <- c("0-29" = "#E69F00","30-39" = "#CC79A7", "40-49" = "#009E73", "50-59" = "#F0E442", "60+" = "#0072B2")
 
 subtype_b_vois_ids_only <- c(40,69,133)
 d_cd4_ages_filtered <- d_cd4_ages %>%
@@ -84,105 +139,66 @@ f1c <- d_cd4_ages_filtered %>%
 	scale_x_continuous(limits = c(1995, 2015), breaks = c(1995, 2000, 2005, 2010, 2015)) +
 	scale_y_continuous(limits=c(0,1000), breaks=seq(from=0,to=1000,by=100)) +
 	facet_wrap(~ phylotype_label, nrow = 1) + # Use facet_wrap to create the subplots
-	theme(plot.margin = margin(0.5, 0.2, 0.2, 0.2, "cm"),axis.title.x = element_text(size = 10, family = helv, face = "bold"),
+	theme(plot.margin = margin(1.5, 0.2, 1.5, 0.2, "cm"),axis.title.x = element_text(size = 10, family = helv, face = "bold"),
 							axis.title.y = element_text(size = 10, family = helv, face = "bold"),axis.text.x = element_text(angle = 60, hjust = 1),
 							axis.text = element_text(color="black"), strip.text = element_text(size = 10, family = helv, face = "bold"), legend.position = c(0.5,0.9),
-							legend.title = element_text(family=helv, size=12), legend.text=element_text(family=helv,size=10),
+							legend.title = element_text(family=helv, size=8), legend.text=element_text(family=helv,size=6),
 							strip.background = element_blank(), strip.placement = "outside", strip.text.x = element_text(family=helv,size=12)) +
+	guides(color = guide_legend(nrow = 2)) +
 	labs(x = "CD4 measurement year",y = bquote(bold("CD4 count (cells /"~mm^3~")")))
 
 f1c
-saveRDS( f1c, glue("{RDS_PATH}/f1c.rds") )
-### END FIGURE 2D ###
-
-###
-# fig. 2B, average decline of VOIs with uncertainty
-###
-
-cd4_measur_palette <- c("1"="#56B4E9","2"="#377EB8","3"="#D55E00","4"="#009E73", "5"="#E69F00")
-
-### BEGIN FIGURE S8 ###
-# Stacked bar of nth measurements per year considering all phylotypes 
-d_cd4$year <- lubridate::year(as.Date(date_decimal(d_cd4$cd4_decimal_date)))
-d_cd4$year <- as.character(d_cd4$year)
-print(length(unique(d_cd4$patientindex))) #8946
-print(nrow(d_cd4)) #31503
-d2 <- d_cd4 %>% group_by(measurement_id, year) %>% summarise(meas_year_n = n()) # measurement for each patient and group by it
-d2$measurement_id <- as.factor(d2$measurement_id)
-# Plot distribution of CD4 measurements order over time
-options(scipen=999)
-ggplot(d2, aes(fill=measurement_id, y=year, x=meas_year_n)) + #scale_fill_viridis(discrete=T, name="CD4 measurement order") +
-	scale_fill_manual(values=cd4_measur_palette, name="CD4 measurement episode") +
-	geom_bar(position = position_stack(reverse = TRUE), stat="identity") + labs(x="CD4 measurements", y="Year") + theme_classic() + #position="stack"
-	theme(axis.text=element_text(colour="black"), legend.key.size = unit(1.5, 'cm'), legend.key.height = unit(0.5, 'cm'), legend.key.width = unit(0.5, 'cm'),legend.title = element_text(size=10), legend.position="top") +
-	leg + scale_x_continuous(expand = c(0,0)) + scale_y_discrete(expand = c(0,0)) 
-ggsave(file=glue("{RESULTS_PATH}/figs/figS8.eps"), dpi=600, width=8, height=6, bg="white")
-ggsave(file=glue("{RESULTS_PATH}/figs/figS8.jpg"), dpi=600, width=8, height=6, bg="white")
-### END FIGURE S8 ###
-
-# Same as above but 1 plot per phylotype
-d3 <- d_cd4 %>% group_by(measurement_id, year, phylotype) %>% summarise(meas_year_n = n())
-d3$measurement_id <- as.factor(d3$measurement_id)
-
-for(i in 1:154) {
-	if(i == 6 || i == 153) next
-	d3 %>% filter(phylotype==i) %>% ggplot(aes(fill=measurement_id, y=year, x=meas_year_n)) + scale_fill_manual(values=cd4_measur_palette, name="CD4 measurement episode") +
-		geom_bar(position = position_stack(reverse = TRUE), stat="identity") + labs(x="CD4 measurements", y="Year") + theme_bw() + 
-		theme(axis.text=element_text(colour="black"), legend.key.size = unit(1.5, 'cm'), legend.key.height = unit(0.5, 'cm'), legend.key.width = unit(0.5, 'cm'),legend.title = element_text(size=10), legend.position="top")
-	system(glue("mkdir -p {RESULTS_PATH}/07_cd4regr_plots/30-B/stackbar_phylotypes/"))
-	suppressMessages( ggsave(file=glue("{RESULTS_PATH}/07_cd4regr_plots/30-B/stackbar_phylotypes/phylotype_{i}_measur_years.png"), dpi=600, width=8, height=6) )
-}
-
-### BEGIN FIGURE S9 ###
-s3_pl <- list()
-c <- 1
-subtype_b_vois_ids_only <- c(40,69,133)
-for(i in subtype_b_vois_ids_only) {
-	s3_pl[[c]] <- d3 %>% filter(phylotype==i) %>% ggplot(aes(fill=measurement_id, y=year, x=meas_year_n)) +
-		geom_bar(position = position_stack(reverse = TRUE), stat="identity") + theme_classic() +
-		scale_fill_manual(values=cd4_measur_palette, name="CD4 measurement episode") + 
-		#scale_x_continuous(expand = c(0,0), limits=c(0, 70), breaks=c(5,10,20,30,40,50,60,70)) + 
-		scale_x_continuous(expand = c(0,0)) + scale_y_discrete(expand = c(0,0)) + 
-		theme(legend.position="top", legend.key.size = unit(1.5, 'cm'), legend.key.height = unit(0.5, 'cm'), legend.key.width = unit(0.5, 'cm'), 
-								legend.text=element_text(size=10), plot.margin = margin(0.5, 0.5, 0.5, 0.5, "cm"), axis.title.x=element_blank(), axis.title.y=element_blank(), 
-								axis.text.y=element_text(size=7)) + leg #+
-	c = c+1
-}
-
-s3_pl[[1]] <- s3_pl[[1]] + scale_x_continuous(expand = c(0,0), limits=c(0, 15), breaks=c(0,5,10,15))
-s3_pl[[2]] <- s3_pl[[2]] + scale_x_continuous(expand = c(0,0), limits=c(0, 15), breaks=c(0,5,10,15))
-s3_pl[[3]] <- s3_pl[[3]] + scale_x_continuous(expand = c(0,0), limits=c(0, 15), breaks=c(0,5,10,15))
+#saveRDS( f1c, glue("{RDS_PATH}/f1c.rds") )
 
 s3 <- ggarrange(s3_pl[[1]], s3_pl[[2]], s3_pl[[3]], common.legend = T, nrow=3, ncol=1, labels = c("A","B","C"), font.label=list(family="Helvetica", color="black",size=10)) #lg2, labels=subtype_b_vois, 
-annotate_figure(s3, left = text_grob("Year", rot = 90, vjust = 1, size=10, family = helv, face="bold"), bottom = text_grob("CD4 measurements", size=10, family = helv, face="bold"))
-ggsave(file=glue("{RESULTS_PATH}/figs/figS9.eps"), dpi=600, width=6, height=8, bg="white")
-ggsave(file=glue("{RESULTS_PATH}/figs/figS9.jpg"), dpi=600, width=6, height=8, bg="white")
+s3_1 <- annotate_figure(s3, left = text_grob("Year", rot = 90, vjust = 1, size=10, family = helv, face="bold"), bottom = text_grob("CD4 measurements", size=10, family = helv, face="bold"))
+s3_2 <- ggarrange(f1c, common.legend = F, nrow=1, ncol=1, labels = c("D"), font.label=list(family="Helvetica", color="black",size=10))
+ggarrange(s3_1, s3_2, common.legend = F, nrow=1, ncol=2, widths=c(1,2))
+ggsave(file=glue("{RESULTS_PATH}/figs/figS9.eps"), device=cairo_ps, dpi=600, width=7, height=6.5, bg="white")
+ggsave(file=glue("{RESULTS_PATH}/figs/figS9.jpg"), dpi=600, width=7, height=6.5, bg="white")
 ### END FIGURE S9 ###
 
-# Table S2: demog variable distributions after CD4 filters
-# Remove duplicated patients
-residuals_removal_mx <- readRDS(glue("{RDS_PATH}/residuals_removal_mx.rds"))
-cd4_before_art_subtypes_all_df <- rbind( residuals_removal_mx[[1,1]]$cd4_df_filt, residuals_removal_mx[[1,2]]$cd4_df_filt, residuals_removal_mx[[1,3]]$cd4_df_filt, residuals_removal_mx[[1,4]]$cd4_df_filt )
-print(nrow(cd4_before_art_subtypes_all_df)) #42355
-# Begin part of table 1
-# Measurements per subtype
-cd4_before_art_subtypes_all_df %>% group_by(rega3subtype) %>% summarise(n=n())
-cd4_before_art_subtypes_all_df_ts1 <- cd4_before_art_subtypes_all_df %>% distinct(patientindex, .keep_all = TRUE)
-cd4_before_art_subtypes_all_df_ts1 %>% group_by(rega3subtype) %>% summarise(n=n())
-print(length(unique(cd4_before_art_subtypes_all_df$patientindex))) #12363
+# Begin part of table 1: CD4 summary stats (including indivs with 0 and 0 measurements, which are not in analysis)
 
-# mean per patient
-summary_cd4_meas <- cd4_before_art_subtypes_all_df %>% add_count(patientindex, name="n_cd4") %>% group_by(patientindex) %>% filter(row_number() >= (n())) #filter(n() == 1)
-mean(summary_cd4_meas$n_cd4) #3.42
-sd(summary_cd4_meas$n_cd4) #0.97
-median(summary_cd4_meas$n_cd4) # 4
-#IQR(summary_cd4_meas$n_cd4); 
-calc_iqr(summary_cd4_meas$n_cd4) #3-4
-table(summary_cd4_meas$n_cd4); hist(summary_cd4_meas$n_cd4)
-# 2    3    4     5      6    8    10 
-# 3701 3023 6789 1560    3    9    4 
+# pick up cd4 df back to get indivs with 0 or 1 meas
+cd4_counts_all_preart <- list()
+for(i in 1:length(subtype_choices)) {
+	print(subtype_choices[i])
+	cd4_counts_all_preart[[i]] <- remove_cd4_after_art(demog_md_subtype_match, subtype_choices[i], cd4_md)
+}
+# all pre-art meas
+cd4_counts_all_preart_df <- rbind(cd4_counts_all_preart[[1]][[3]], cd4_counts_all_preart[[2]][[3]], cd4_counts_all_preart[[3]][[3]], cd4_counts_all_preart[[4]][[3]])
+# corresp patient and sample
+cd4_counts_all_preart_corresp_df <- rbind(cd4_counts_all_preart[[1]][[2]], cd4_counts_all_preart[[2]][[2]], cd4_counts_all_preart[[3]][[2]], cd4_counts_all_preart[[4]][[2]])
+# tips included
+tips_incl <- unlist(lapply(timetrees, function(tree) tree$tip.label))
+tips_incl_df <- data.frame(testindex=tips_incl)
+# make sure get all testindex for incl tips
+cd4_counts_all_preart_corresp_tips_incl_df <- left_join(tips_incl_df, cd4_counts_all_preart_corresp_df, by="testindex")
+demog_md_subtype_match$testindex <- paste0("t.",demog_md_subtype_match$testindex)
+# get all assoc patientindex
+cd4_counts_all_preart_corresp_tips_incl_df <- cd4_counts_all_preart_corresp_tips_incl_df %>%
+	left_join(demog_md_subtype_match %>% select(testindex, patientindex_match = patientindex), by = "testindex") %>%
+	mutate(patientindex = ifelse(is.na(patientindex), patientindex_match, patientindex)) %>%
+	select(-patientindex_match) 
+cd4_counts_all_preart_corresp_tips_incl_all_meas_df <- left_join(cd4_counts_all_preart_df, cd4_counts_all_preart_corresp_tips_incl_df, by="patientindex", relationship = "many-to-many")
+# 75283 rows + 2258 (0 meas) = 77541 meas including 
+# count number of CD4 measurements per patient
+cd4_counts_all_quantities <- cd4_counts_all_preart_corresp_tips_incl_all_meas_df %>% group_by(patientindex) %>% summarise(n_obs = n())
+# add back ones with zero meas
+cd4_counts_all_quantities2 <- data.frame(patientindex = seq(from = max(cd4_counts_all_quantities$patientindex),length.out = 40888-nrow(cd4_counts_all_quantities)),n_obs=0)
+cd4_counts_all_quantities3 <- rbind(cd4_counts_all_quantities, cd4_counts_all_quantities2)
 
+mean(cd4_counts_all_quantities3$n_obs) #1.84
+sd(cd4_counts_all_quantities3$n_obs) #1.36
+median(cd4_counts_all_quantities3$n_obs) # 1
+calc_iqr(cd4_counts_all_quantities3$n_obs) #1-4
+table(cd4_counts_all_quantities3$n_obs); hist(cd4_counts_all_quantities3$n_obs)
+# 0     1     2     3     4     5     6     8    10 
+# 2258 23471  3729  3003  6840  1571     3     9     4 
 # End part of table 1
+
+# Table S2: demog variable distributions after CD4 filters
 
 # Gender
 demog_md_subtype_match_sex_cd4 <- cd4_before_art_subtypes_all_df_ts2

@@ -5,7 +5,7 @@ RDS_PATH="rds"
 RESULTS_PATH="results"
 #dir.create( RESULTS_PATH )
 
-# Figure 2D: age comparisons
+# Figure 2C: age comparisons
 subtype_b_vois_ids_only <- c(40,69,133)
 subtype_b_vois <- c("PT.B.40.UK","PT.B.69.UK","PT.B.133.UK")
 backbone_cl_control <- readRDS("rds/backbone_cl_control.rds")
@@ -31,7 +31,7 @@ count_vois_since_2015_vois <- count_vois_since_2015[count_vois_since_2015$phylot
 tb <- table(count_vois_since_2015_vois$phylotype, count_vois_since_2015_vois$after_2015)
 # format and include as table S11
 
-# Table S12: Welch's t-test on age within each VOI phylotype vs backbone
+# Table S14: Welch's t-test on age within each VOI phylotype vs backbone
 pt_voi_lbls <- subtype_b_vois
 #df_age_non_vois <- d100_ages_voi_non[!(d100_ages_voi_non$phylotype %in% pt_voi_lbls),]
 
@@ -59,10 +59,9 @@ ttest_ages_res_adj <- ttest_ages_res_adj %>% mutate(across(c(p_value, p_adj_bonf
 ttest_ages_res_adj <- ttest_ages_res_adj %>% dplyr::select( phylotype, rows_x, estimate_x, sd_x, estimate_y, sd_y, p_adj_fdr )
 # only PT133 characterised by younger age of patients (30.333 vs 36.241 backbone), p_adj_fdr=0.0003811728
 
-# Table S12 csv
-write.csv(ttest_ages_res_adj, file=glue("{RESULTS_PATH}/tables/tableS12.csv"), quote=F, row.names=F)
+# Table S14 csv
+write.csv(ttest_ages_res_adj, file=glue("{RESULTS_PATH}/tables/tableS14.csv"), quote=F, row.names=F)
 
-#age_diag_pt_pal <- c("PT.B.5.UK"="#0099B4","PT.B.40.UK"="#088c06","PT.B.69.UK"="#ED0000","PT.B.133.UK"="#00468B","PT.B.137.UK"="#580618", "Backbone"="#ADB6B6")
 age_diag_pt_pal <- c("PT.B.40.UK"="#56B4E9", "PT.B.69.UK"="#D55E00", "PT.B.133.UK"="#009E73")
 
 ttest_ages_res_adj$group1 <- ttest_ages_res_adj$phylotype

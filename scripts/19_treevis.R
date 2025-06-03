@@ -14,7 +14,7 @@ legend_config <- theme(axis.text.x = element_text(color="black", size=5),
 																							plot.margin = unit(c(2,2,0,0), "lines"))
 
 # [[mcs,subtype]][[1]] -> tree
-# [[mcs,subtype]][[2]] -> sample_times (I think same as dbsample_decimal_date)
+# [[mcs,subtype]][[2]] -> sample_times
 
 # variables to plot: 
 # 1) age_group, sex, ethnicity, PHE_regiondiagnosed, years_since_diagnosis
