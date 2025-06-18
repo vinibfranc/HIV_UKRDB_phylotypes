@@ -52,9 +52,6 @@ hist(cd4_subtypes_comb2[[1,4]]$years_since_1cd4, breaks=50)
 
 backbone_cl_control <- readRDS(glue("{RDS_PATH}/backbone_cl_control.rds"))
 
-NREP <- 10
-NCPU <- 6
-
 fit_cd4_model <- function(outcome, fostr, cd4_df, mcs_subtype_choice_cd4_transf, do_boot) {
 	
 	formula <- as.formula(paste(outcome, fostr)) 
@@ -124,11 +121,59 @@ fit_cd4_model <- function(outcome, fostr, cd4_df, mcs_subtype_choice_cd4_transf,
     sd_intercept_pt, sd_slope_pt, correlation_pt,
     sd_intercept_patient, sd_slope_patient, correlation_patient,
     resid_sd)
-	}
+		}
+		
+		.check_bootstrap_sample <- function(data, indices) {
+			boot_data <- data[indices, ]
+			
+			# Count individuals with only 1 measurement
+			obs_per_individual <- table(boot_data$patientindex)
+			n_single_obs <- sum(obs_per_individual == 1)
+			
+			# Count phylotypes with no observations
+			phylotypes_in_boot <- unique(boot_data$phylotype)
+			all_phylotypes <- unique(data$phylotype)
+			n_missing_phylotypes <- length(all_phylotypes) - length(phylotypes_in_boot)
+			
+			return(c(n_single_obs = n_single_obs, n_missing_phylotypes = n_missing_phylotypes))
+		}
+		
+		# Run diagnostic bootstrap to understand sample characteristics
+		set.seed(123) # for reproducibility
+		diagnostic_boot <- boot::boot(data = cd4_df, statistic = .check_bootstrap_sample, R=NREP, parallel="multicore", ncpus=NCPU)
+		
+		# Summarize results
+		single_obs_stats <- diagnostic_boot$t[, 1]
+		missing_phylotype_stats <- diagnostic_boot$t[, 2]
+		
+		cat("Bootstrap sample characteristics across 1000 samples:\n")
+		cat("Individuals with only 1 CD4 measurement:\n")
+		cat("  Mean:", round(mean(single_obs_stats), 1), "\n")
+		cat("  Range:", min(single_obs_stats), "to", max(single_obs_stats), "\n")
+		cat("  Median:", median(single_obs_stats), "\n")
 		
 		print("Running boot")
 		boot_res <- boot::boot(data=cd4_df, fo=formula, statistic=.random_effect_se, R=NREP, parallel="multicore", ncpus=NCPU)
 		print(boot_res)
+		
+		n_phylotypes <- length(unique(cd4_df$phylotype))
+		
+		# Check for completely missing phylotypes across all bootstrap iterations
+		phylotypes_with_all_na <- which(apply(boot_res$t[, 1:n_phylotypes, drop=FALSE], 2, function(x) all(is.na(x))))
+		if(length(phylotypes_with_all_na) > 0) {
+			cat("Phylotypes with no observations in any bootstrap sample:", phylotypes_with_all_na, "\n")
+			cat("Number of phylotypes affected:", length(phylotypes_with_all_na), "out of", n_phylotypes, "\n")
+		}
+		
+		# Check for partially missing phylotypes (some bootstrap samples have data, others don't)
+		phylotypes_with_some_na <- which(apply(boot_res$t[, 1:n_phylotypes, drop=FALSE], 2, function(x) any(is.na(x)) & !all(is.na(x))))
+		if(length(phylotypes_with_some_na) > 0) {
+			cat("Phylotypes with missing data in some bootstrap samples:", phylotypes_with_some_na, "\n")
+			for(i in phylotypes_with_some_na) {
+				na_count <- sum(is.na(boot_res$t[, i]))
+				cat("  Phylotype", i, ":", na_count, "out of", NREP, "bootstrap samples had no data\n")
+			}
+		}
 		
 		# Extract random slope SEs
 		n_phylotypes <- length(unique(cd4_df$phylotype))

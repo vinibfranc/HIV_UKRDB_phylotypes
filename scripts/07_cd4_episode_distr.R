@@ -74,14 +74,16 @@ d2 <- d_cd4 %>% group_by(measurement_id, year) %>% summarise(meas_year_n = n()) 
 d2$measurement_id <- as.factor(d2$measurement_id)
 # Plot distribution of CD4 measurements order over time
 options(scipen=999)
-leg <- theme(text=element_text(family="Helvetica"), axis.text=element_text(size=10, color="black"), axis.title=element_text(size=10, color="black", face="bold"))
-ggplot(d2, aes(fill=measurement_id, y=year, x=meas_year_n)) + #scale_fill_viridis(discrete=T, name="CD4 measurement order") +
+leg2 <- theme(text=element_text(family="Helvetica"), axis.text=element_text(size=7, color="black"), axis.title=element_text(size=10, color="black", face="bold"))
+s8_1 <- ggplot(d2, aes(fill=measurement_id, y=year, x=meas_year_n)) + #scale_fill_viridis(discrete=T, name="CD4 measurement order") +
 	scale_fill_manual(values=cd4_measur_palette, name="CD4 measurement episode") +
 	geom_bar(position = position_stack(reverse = TRUE), stat="identity") + labs(x="CD4 measurements", y="Year") + theme_classic() + #position="stack"
 	theme(axis.text=element_text(colour="black"), legend.key.size = unit(1.5, 'cm'), legend.key.height = unit(0.5, 'cm'), legend.key.width = unit(0.5, 'cm'),legend.title = element_text(size=10), legend.position="top") +
-	leg + scale_x_continuous(expand = c(0,0)) + scale_y_discrete(expand = c(0,0)) 
-ggsave(file=glue("{RESULTS_PATH}/figs/figS8.eps"), dpi=600, width=8, height=6, bg="white")
-ggsave(file=glue("{RESULTS_PATH}/figs/figS8.jpg"), dpi=600, width=8, height=6, bg="white")
+	leg2 + scale_x_continuous(expand = c(0,0)) + scale_y_discrete(expand = c(0,0))
+s8_2 <- readRDS(glue("{RDS_PATH}/pl_c.rds"))
+ggarrange(s8_1, s8_2 + leg2, nrow=2, ncol=1, labels=c("A","B"), font.label=list(family=helv, color="black",size=10), heights=c(3.5,5))
+ggsave(file=glue("{RESULTS_PATH}/figs/figS8.eps"), dpi=600, width=10, height=12, bg="white")
+ggsave(file=glue("{RESULTS_PATH}/figs/figS8.jpg"), dpi=600, width=10, height=12, bg="white")
 ### END FIGURE S8 ###
 
 # Same as above but 1 plot per phylotype

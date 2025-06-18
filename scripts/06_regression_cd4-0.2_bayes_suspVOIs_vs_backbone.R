@@ -621,3 +621,85 @@ new_data_coeffs_cd4s_time_to_350_upper_comm[,c("phylotype","years_since_1cd4")]
 new_data_coeffs_cd4s_time_to_350$years_since_1cd4 - new_data_coeffs_cd4s_time_to_350_comm$years_since_1cd4
 new_data_coeffs_cd4s_time_to_350_lower$years_since_1cd4 - new_data_coeffs_cd4s_time_to_350_lower_comm$years_since_1cd4
 new_data_coeffs_cd4s_time_to_350_upper$years_since_1cd4 - new_data_coeffs_cd4s_time_to_350_upper_comm$years_since_1cd4
+
+# Plot 4 CD4 models estimates (enforce inclusion of 10 overlapping 3 methods suspected VOIs by ML CD4 & overall 3 VOIs)
+
+# S8
+t_s8 <- read.csv(glue("{RESULTS_PATH}/tables/tableS8.csv"))
+# normal approx
+t_s8$Q2.5 <- t_s8$phylotype_coef - 1.96 * t_s8$se
+t_s8$Q97.5 <- t_s8$phylotype_coef + 1.96 * t_s8$se
+t_s8 <- t_s8 %>% dplyr::select(subtype, phylotype, Q2.5, phylotype_coef, Q97.5, p_value)
+# t_s8_signif <- t_s8 %>% filter(subtype=="B" & phylotype=="40") %>% top_n(-10, p_value)
+t_s8_signif <- t_s8 %>% filter(phylotype_coef < 0) %>% arrange(p_value) %>% filter(p_value <= 0.05)#%>% slice_head(n = 10)
+pt40 <- t_s8 %>% filter(subtype == "B", phylotype == "40")
+t_s8_signif_40 <- bind_rows(t_s8_signif, pt40) %>% distinct()
+t_s8_signif_40$method <- "ML normal random effects"
+t_s8_signif_40 <- t_s8_signif_40 %>% rename(Estimate = phylotype_coef) 
+
+# S9
+t_s9 <- read.csv(glue("{RESULTS_PATH}/tables/tableS9.csv"))
+t_s9 <- t_s9 %>% dplyr::select(subtype, phylotype, Q2.5, Estimate, Q97.5, prob_negative)
+t_s9_signif <- t_s9 %>% arrange(desc(prob_negative)) %>% filter(prob_negative > 0.8) #slice_head(n = 10)
+pt40_2 <- t_s9 %>% filter(subtype == "B" & (phylotype == "40" | phylotype == "69"))
+t_s9_signif_40 <- bind_rows(t_s9_signif, pt40_2) %>% distinct()
+t_s9_signif_40$method <- "Bayesian normal random effects"
+
+# S10
+t_s10 <- read.csv(glue("{RESULTS_PATH}/tables/tableS10.csv"))
+t_s10 <- t_s10 %>% dplyr::select(subtype, phylotype, Q2.5, Estimate, Q97.5, prob_negative)
+t_s10_signif <- t_s10 %>% arrange(desc(prob_negative)) %>% filter(prob_negative > 0.8) #slice_head(n = 10)
+pt40_3 <- t_s10 %>% filter(subtype == "B" & (phylotype == "40" | phylotype == "69"))
+t_s10_signif_40 <- bind_rows(t_s10_signif, pt40_3) %>% distinct()
+t_s10_signif_40$method <- "Bayesian R2-D2 fixed effects"
+
+# inner_join those to see the ones to keep (n=11)
+t_s8_9 <- inner_join(t_s8_signif_40, t_s9_signif_40, by = c("subtype", "phylotype"))
+t_s8_9_10 <- inner_join(t_s8_9, t_s10_signif_40, by = c("subtype", "phylotype"))
+
+t_s8_signif_40_incl <- t_s8_signif_40 %>% filter(subtype %in% t_s8_9_10$subtype & phylotype %in% t_s8_9_10$phylotype)
+t_s9_signif_40_incl <- t_s9_signif_40 %>% filter(subtype %in% t_s8_9_10$subtype & phylotype %in% t_s8_9_10$phylotype)
+t_s10_signif_40_incl <- t_s10_signif_40 %>% filter(subtype %in% t_s8_9_10$subtype & phylotype %in% t_s8_9_10$phylotype)
+
+# S11
+t_s11 <- read.csv(glue("{RESULTS_PATH}/tables/tableS11.csv"))
+t_s11 <- t_s11 %>% dplyr::select(subtype, phylotype, Q2.5, Estimate, Q97.5, p_value_bayes)
+t_s11_signif <- t_s11 %>% filter(p_value_bayes <= 0.05)
+t_s11_signif <- t_s11_signif %>% add_row(subtype="B", phylotype=40, Q2.5=-32.407, Estimate=-13.000, Q97.5=6.128, p_value_bayes=0.19)
+#t_s11_top10 <- t_s11 %>% arrange(p_value_bayes) %>% slice_head(n = 10)
+t_s11_signif$method <- "Bayesian fixed effects vs backbone"
+
+cd4_model_palette <- c("ML normal random effects"="#377EB8","Bayesian normal random effects"="#D55E00",
+																							"Bayesian R2-D2 fixed effects"="#E69F00", "Bayesian fixed effects vs backbone"="#009E73")
+
+subtype_order <- c("B", "C", "A_A1", "CRF_02AG")
+compare_df <- bind_rows(t_s8_signif_40_incl, t_s9_signif_40_incl, t_s10_signif_40_incl, t_s11_signif) %>%
+	mutate(subtype = factor(subtype, levels = subtype_order),
+								subtype_phylotype=paste0("PT.",subtype,".", phylotype,".UK")) %>%
+	#filter(subtype == "B") %>%
+	arrange(subtype, phylotype) %>%
+	mutate(method = factor(method, levels = c(
+									"ML normal random effects",
+									"Bayesian normal random effects",
+									"Bayesian R2-D2 fixed effects",
+									"Bayesian fixed effects vs backbone"
+								))) %>% #phylotype = as.factor(phylotype),
+	mutate(subtype_phylotype = factor(subtype_phylotype, levels = unique(subtype_phylotype)))
+helv="Helvetica"
+pl_c <- ggplot(compare_df, aes(x = Estimate, y = subtype_phylotype)) + #reorder(subtype_phylotype, Estimate)
+	geom_point(aes(color = method), position = position_dodge(width = 0.7), size = 2.5) +
+	geom_errorbar(aes(xmin = Q2.5, xmax = Q97.5, color = method),
+															position = position_dodge(width = 0.7), width = 0.3) +
+	scale_color_manual(values=cd4_model_palette, name="CD4 model") +
+	labs(x = "CD4 decline estimate (95% CI)",
+						y = "Phylotype") +
+	theme_minimal() + theme(axis.text=element_text(size=8,family=helv,color="black"), 
+																									axis.title= element_text(family=helv,face = "bold"),
+																									legend.title = element_text(family=helv,size=10), 
+																									legend.text=element_text(family=helv,size=10),
+																									legend.key.size = unit(1.5, 'cm'), 
+																									legend.key.height = unit(0.5, 'cm'), 
+																									legend.key.width = unit(0.5, 'cm'),
+																									legend.position="top") + guides(color=guide_legend(ncol=2))
+#ggsave(plot=pl_c, filename=glue("{RESULTS_PATH}/figs/_figSX.jpg"), width=10, height=8, bg="white", dpi=300)
+saveRDS(pl_c, glue("{RDS_PATH}/pl_c.rds"))
