@@ -1,7 +1,13 @@
 # HIV_UKRDB_phylotypes
-Code for the paper "Evidence for Circulation of High-Virulence HIV-1 Subtype B 
-Variants in the United Kingdom", which uses genomic and clinical (viral loads and CD4 counts) 
+Code for the paper [Evidence for Circulation of High-Virulence HIV-1 Subtype B 
+Variants in the United Kingdom](https://academic.oup.com/ve/advance-article/doi/10.1093/ve/veaf048/8169844), which uses genomic and clinical (viral loads and CD4 counts) 
 data from the UK Drug Resistance Database (UKRDB or UKDRD) to investigate HIV-1 variants with increased virulence.
+
+## Citation
+
+Franceschi VB, Drake KO, Bibby DF, Sabin CA, Dunn DT, Mbisa JL, Volz EM. Evidence for circulation of high-virulence HIV-1 subtype B variants in the United Kingdom. Virus Evolution. 2025 Jun 20:veaf048. DOI: 10.1093/ve/veaf048
+
+---
 
 This repository includes ~30 modular R scripts used in the analysis. The prefix of each file denotes its order.
 The general workflow is as follows:
@@ -327,17 +333,3 @@ See the session info below for specific package versions used:
  * ── Packages attached to the search path.
 ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 ```
-
-## Citation
-
-Provisionally, you can cite this preprint:
-
-Franceschi, Vinicius B. and Drake, Kieran O. and Bibby, David F. and Sabin, Caroline and Dunn, David T. and Mbisa, Jean L. and Volz, Erik. 
-Evidence for Circulation of High-Virulence HIV-1 Subtype B Variants in the United Kingdom. 
-Available at SSRN: https://ssrn.com/abstract=4929798
-
-The analyses presented previously in the preprint were improved here, including, in particular, 
-comparisons against other partitioning methods, enhanced viral load and CD4 decline models, 
-and a new selection of VOIs. Despite these enhancements, the results remain consistent
-with those reported in the preprint. The more robust and updated analyses reported here 
-have been submitted to a journal.
